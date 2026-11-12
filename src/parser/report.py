@@ -207,3 +207,7 @@ def make_object_report(project, *, exported_on, exchange_threshold=7):
         "Остаток, руб.": balance,
         "Риски": project.get("risks"),
     }
+
+
+# Единый порядок полей для JSON парсера и ответа API после чтения из JSONB.
+REPORT_FIELDS = tuple(make_object_report({}, exported_on=date.min))

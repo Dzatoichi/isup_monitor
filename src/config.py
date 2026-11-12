@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import URL
 
 
 class Settings(BaseSettings):
@@ -14,10 +15,13 @@ class Settings(BaseSettings):
         extra="ignore",
         )
 
-    def CONNECT_ASYNC(self):
+    def CONNECT_ASYNC(self) -> URL:
         """
         Функция создания соединения с БД.
         """
-        return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASS}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        return URL.create(
+            "postgresql+psycopg", username=self.DB_USER, password=self.DB_PASS,
+            host=self.DB_HOST, port=int(self.DB_PORT), database=self.DB_NAME,
+        )
 
 settings = Settings() # pyright: ignore[reportCallIssue]

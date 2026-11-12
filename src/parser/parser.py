@@ -3,6 +3,7 @@
 import argparse
 import json
 import re
+import signal
 import sys
 from contextlib import redirect_stdout
 from datetime import datetime
@@ -246,17 +247,19 @@ def read_report_sections(page, details):
         ))
     except (PlaywrightError, ValueError) as error:
         print(f"  Не удалось прочитать команды ЭДО: {str(error).splitlines()[0]}", file=sys.stderr)
-        details["edo_error"] = True
+        details["edo_error"] = f"Не удалось получить состав команды из ЭДО ({type(error).__name__})"
 
     try:
         tab("Документация").click(timeout=45000)
-        details["operation_dates"] = read_document_dates(page)
+        documents = []
+        details["operation_dates"] = read_document_dates(page, records=documents)
+        details["documents"] = documents
     except (PlaywrightError, AssertionError, ValueError) as error:
         print(f"  Не удалось прочитать даты документов: {str(error).splitlines()[0]}", file=sys.stderr)
         details["documents_error"] = True
 
 
-def collect_projects_with_participants(page, *, limit=None, report=False):
+def collect_projects_with_participants(page, *, limit=None, report=False, on_project=None):
     """Обходит объекты и возвращает записи вместе с признаком завершения обхода."""
     grid = find_projects_grid(page)
     management_tab = page.locator('div.tab[depth="1"] span.label:visible').filter(
@@ -313,6 +316,7 @@ def collect_projects_with_participants(page, *, limit=None, report=False):
                             read_project_schedule(page, details)
                     except (PlaywrightError, AssertionError, RuntimeError, ValueError) as error:
                         print(f"  Не удалось прочитать сроки ПИР и СМР: {str(error).splitlines()[0]}", file=sys.stderr)
+                        details["schedule_error"] = "Не удалось прочитать сроки ПИР и СМР"
                 step = "переход в «Управление проектами»"
                 management_tab.click(timeout=45000)
                 step = "переход в «Управление участниками»"
@@ -330,7 +334,10 @@ def collect_projects_with_participants(page, *, limit=None, report=False):
             if report and "oks_number" in details:
                 read_report_sections(page, details)
 
-            results.append({**project, **details})
+            record = {**project, **details}
+            if on_project is not None:
+                on_project(record)
+            results.append(record)
             if len(results) == limit:
                 return results, True
 
@@ -348,12 +355,18 @@ def collect_projects_with_participants(page, *, limit=None, report=False):
             return results, False
 
 
+def stop_on_sigterm(signum, frame):
+    """Передаёт остановку контейнера штатной обработке прерванной выгрузки."""
+    raise KeyboardInterrupt
+
+
 def main():
     """Разбирает параметры запуска, собирает данные и печатает JSON."""
     cli = argparse.ArgumentParser(description="Сбор объектов и участников из ИСУП")
     cli.add_argument("--limit", type=int, help="Остановиться после указанного числа объектов")
     cli.add_argument("--headed", action="store_true", help="Показать окно браузера")
     cli.add_argument("--report", action="store_true", help="Выгрузить 34 поля отчёта «Объекты»")
+    cli.add_argument("--save-db", action="store_true", help="Записать снимок в PostgreSQL")
     cli.add_argument("--exchange-threshold", type=int, default=7, help="Порог для вывода о днях без обмена")
     args = cli.parse_args()
     if args.limit is not None and args.limit < 1:
@@ -364,26 +377,53 @@ def main():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=not args.headed)
         try:
-            page = browser.new_page(viewport={"width": 1600, "height": 900})
+            ingestion = None
+            if args.save_db:
+                from src.shared.database import create_ingestion_sessions
+                from src.web.ingestions.service import IngestionService
+
+                ingestion = IngestionService(create_ingestion_sessions(), args.exchange_threshold)
             # Служебные сообщения отправляем в stderr, чтобы stdout содержал только JSON.
             with redirect_stdout(sys.stderr):
-                login(page)
-                open_projects_registry(page)
-                results, complete = collect_projects_with_participants(
-                    page, limit=args.limit, report=args.report
-                )
+                previous_handler = signal.signal(signal.SIGTERM, stop_on_sigterm)
+                try:
+                    page = browser.new_page(viewport={"width": 1600, "height": 900})
+                    login(page)
+                    open_projects_registry(page)
+                    results, complete = collect_projects_with_participants(
+                        page, limit=args.limit, report=args.report or args.save_db,
+                        on_project=ingestion.save_project if ingestion is not None else None,
+                    )
+                except BaseException as error:
+                    if ingestion is not None:
+                        try:
+                            ingestion.finish(error=error)
+                        except Exception as log_error:
+                            print(f"Не удалось обновить журнал выгрузки ({type(log_error).__name__})")
+                    if isinstance(error, KeyboardInterrupt):
+                        print("Выгрузка остановлена")
+                        raise SystemExit(130) from None
+                    raise
+                finally:
+                    signal.signal(signal.SIGTERM, previous_handler)
+                if ingestion is not None:
+                    status = ingestion.finish(complete=complete, limited=args.limit is not None)
+                    print(f"Снимок {ingestion.snapshot_id} сохранён в PostgreSQL со статусом {status}")
             output = results
             if args.report:
-                exported_on = datetime.now(REPORT_TIMEZONE).date()
+                exported_on = ingestion.exported_on if ingestion is not None else datetime.now(REPORT_TIMEZONE).date()
                 output = [
                     make_object_report(
                         project, exported_on=exported_on, exchange_threshold=args.exchange_threshold
                     )
                     for project in results
                 ]
-            print(json.dumps(output, ensure_ascii=False, indent=2))
+            if not args.save_db or args.report:
+                print(json.dumps(output, ensure_ascii=False, indent=2))
             errors = ("participants_error", "edo_error", "documents_error")
-            if not complete or any(any(key in project for key in errors) for project in results):
+            if (ingestion is not None and status == "failed") or not complete or any(
+                any(key in project for key in errors) for project in results
+            ):
                 raise SystemExit(1)
         finally:
             try:

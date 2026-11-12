@@ -11,8 +11,8 @@ from .report import parse_date
 DATE_CELL = '[role="gridcell"][col-id="doc_date"]'
 
 
-def read_document_dates(page):
-    """Собирает даты с каждой страницы и проверяет полноту строк."""
+def read_document_dates(page, *, records=None):
+    """Собирает даты и, если передан список, реквизиты строк документации."""
     heading = page.locator('[role="columnheader"][col-id="doc_date"]')
     grid = page.locator(".ag-root-wrapper:visible").filter(has=heading)
     grid.wait_for(state="visible", timeout=25000)
@@ -49,10 +49,17 @@ def read_document_dates(page):
         first_cell.wait_for(state="attached", timeout=15000)
         received = {}
         while True:
-            received.update(cells.evaluate_all("""elements => elements.map(cell => [
-                Number(cell.closest('[role="row"]').getAttribute('row-index')),
-                cell.textContent.trim()
-            ])"""))
+            received.update(cells.evaluate_all("""elements => elements.map(cell => {
+                const row = cell.closest('[role="row"]');
+                const read = id => row.querySelector(`[col-id="${id}"]`)?.textContent.trim() || null;
+                return [Number(row.getAttribute('row-index')), {
+                    document_on: cell.textContent.trim(),
+                    document_number: read('doc_num'),
+                    name: read('doc_name'),
+                    document_type: read('type_name'),
+                    status: read('status_name')
+                }];
+            })"""))
             if scroll is None:
                 break
             info = get_scroll_info(scroll)
@@ -78,7 +85,12 @@ def read_document_dates(page):
                 f"В документации прочитано {len(expected) - len(missing)} из "
                 f"{len(expected)} строк страницы (записи {first_row}–{last_row})"
             )
-        dates.extend(parse_date(received[index]) for index in expected)
+        for index in expected:
+            record = received[index]
+            record["document_on"] = parse_date(record["document_on"])
+            dates.append(record["document_on"])
+            if records is not None:
+                records.append(record)
 
         button = get_next_button(grid)
         if is_next_disabled(button):

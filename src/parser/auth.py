@@ -17,33 +17,59 @@ VISIBLE_PROJECT_NAME = ".ag-center-cols-container .name_oks_table:visible"
 # Авторизация
 def login(page):
     """Входит в ИСУП с настройками из окружения и ждёт появления меню."""
-    page.goto(
-        os.environ["ISUP_URL"],
-        wait_until="domcontentloaded",
-        timeout=30000,
-    )
+    def skip_prefetch(route):
+        headers = route.request.headers
+        purpose = headers.get("sec-purpose") or headers.get("purpose", "")
+        if "prefetch" in purpose:
+            route.abort()
+        else:
+            route.fallback()
 
-    print("Сайт открыт")
+    # Страница входа заранее запрашивает сотни ресурсов для других разделов.
+    page.route("**/*", skip_prefetch)
+    try:
+        login_input = page.get_by_placeholder("Логин")
+        password_input = page.get_by_placeholder("Пароль")
+        for attempt in range(2):
+            try:
+                page.goto(os.environ["ISUP_URL"], wait_until="commit", timeout=30000)
+                break
+            except PlaywrightTimeoutError as error:
+                if attempt == 1:
+                    raise RuntimeError("ИСУП не ответила на открытие страницы входа после двух попыток") from error
+                page.wait_for_timeout(2000)
 
-    page.get_by_placeholder("Логин").fill(os.environ["ISUP_LOGIN"])
-    page.get_by_placeholder("Пароль").fill(os.environ["ISUP_PASSWORD"])
+        print("Страница ИСУП ответила, ждём загрузки формы входа")
+        try:
+            # Повторное открытие страницы прервало бы загрузку тяжёлых скриптов.
+            login_input.wait_for(state="visible", timeout=180000)
+            password_input.wait_for(state="visible", timeout=15000)
+        except PlaywrightTimeoutError as error:
+            raise RuntimeError("ИСУП ответила, но форма входа не загрузилась за 3 минуты") from error
 
-    page.get_by_role(
-        "button",
-        name="Войти",
-        exact=True,
-    ).click()
+        print("Сайт открыт")
 
-    registry_icon = page.locator(
-        'img[src*="edinii_reestr_objectov.png"]'
-    )
+        login_input.fill(os.environ["ISUP_LOGIN"])
+        password_input.fill(os.environ["ISUP_PASSWORD"])
 
-    registry_icon.wait_for(
-        state="visible",
-        timeout=60000,
-    )
+        page.get_by_role(
+            "button",
+            name="Войти",
+            exact=True,
+        ).click()
 
-    print("Авторизация успешна")
+        registry_icon = page.locator(
+            'img[src*="edinii_reestr_objectov.png"]'
+        )
+
+        registry_icon.wait_for(
+            state="visible",
+            timeout=60000,
+        )
+
+        print("Авторизация успешна")
+    finally:
+        page.unroute("**/*", skip_prefetch)
 
 
 # ==========================================
@@ -255,6 +281,7 @@ def collect_current_page(page, grid, *, scroll_positions=None):
         scrollable.evaluate("el => el.scrollTop = 0")
         page.wait_for_timeout(300)
 
+        stalled_steps = 0
         for _ in range(300):
             before = get_scroll_info(scrollable)
             remember_visible(before["top"])
@@ -282,16 +309,21 @@ def collect_current_page(page, grid, *, scroll_positions=None):
             after = get_scroll_info(scrollable)
 
             if after["top"] <= before["top"]:
-                raise RuntimeError(
-                    "Не удалось продолжить прокрутку"
-                )
+                if after["top"] >= after["max"] - 2:
+                    # После подгрузки строк AG Grid может пересчитать высоту и сдвинуть конец.
+                    remember_visible(after["top"])
+                    break
+                stalled_steps += 1
+                if stalled_steps == 3:
+                    raise RuntimeError(
+                        f"Не удалось продолжить прокрутку: позиция {after['top']} из {after['max']}"
+                    )
+            else:
+                stalled_steps = 0
         else:
             raise RuntimeError(
                 "Превышен лимит шагов прокрутки"
             )
-
-        # Последние строки внизу таблицы
-        remember_visible(before["top"])
 
     if not projects:
         raise RuntimeError(
@@ -300,10 +332,18 @@ def collect_current_page(page, grid, *, scroll_positions=None):
 
     indices = sorted(projects)
 
-    # Разрывы между индексами показывают, что при прокрутке потерялись строки.
+    # Сверяем также начало и конец страницы, чтобы заметить пропуск крайних строк.
+    bounds = grid.evaluate("""root => {
+        const read = ref => Number(root.querySelector(
+            `.ag-paging-panel :is([ref="${ref}"], [data-ref="${ref}"])`
+        )?.textContent.trim());
+        return [read('lbFirstRowOnPage'), read('lbLastRowOnPage')];
+    }""")
+    start, end = bounds
+    expected = range(start - 1, end) if start and end and end >= start else range(indices[0], indices[-1] + 1)
     missing = [
         index
-        for index in range(indices[0], indices[-1] + 1)
+        for index in expected
         if index not in projects
     ]
 

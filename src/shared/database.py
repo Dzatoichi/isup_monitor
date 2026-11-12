@@ -1,7 +1,8 @@
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import create_engine
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from src.config import settings
 
@@ -29,3 +30,9 @@ class DatabaseHelper:
 
 
 db_helper = DatabaseHelper()
+
+
+def create_ingestion_sessions():
+    """Создаёт синхронные сессии для парсера Playwright."""
+    engine = create_engine(settings.CONNECT_ASYNC(), pool_pre_ping=True)
+    return sessionmaker(engine)

@@ -45,7 +45,7 @@ def summarize_teams(rows):
     }
 
 
-def read_unsigned_from_cards(frame, organizations, person_count):
+def read_unsigned_from_cards(frame, organizations, person_count, *, signatures=None):
     """Считает подписи по карточкам участников, открытым через меню ЭДО."""
     names = {}
     emails = {}
@@ -67,7 +67,8 @@ def read_unsigned_from_cards(frame, organizations, person_count):
     except PlaywrightTimeoutError:
         # Список может открыться со свёрнутыми организациями.
         pass
-    signatures = {}
+    if signatures is None:
+        signatures = {}
 
     def remember_visible_cards():
         # В новой разметке подпись внутри карточки, в старой — рядом с её заголовком.
@@ -147,6 +148,49 @@ def open_participants_frame(module_frame, project_id):
     raise ValueError("В модуле заказчика (ЭДО) не найдено меню ⚏ для открытия участников")
 
 
+def collect_edo_records(organizations, signatures):
+    """Сохраняет доступные строки ЭДО и подтверждённые признаки подписи."""
+    organization_rows = []
+    people = []
+    contracts = []
+    for row in organizations:
+        org = row.get("organization") or {}
+        organization_id = row.get("organizationId") or org.get("id") or org.get("_id")
+        role = row.get("organizationRole")
+        organization_rows.append({
+            "source": "edo", "external_id": organization_id,
+            "name": org.get("name") or org.get("shortName"),
+            "role": role if isinstance(role, str) else None,
+            **{key: org.get(key) for key in ("inn", "kpp", "ogrn")},
+        })
+        users = {user["id"]: user for user in row.get("users") or [] if user.get("id")}
+        members = {user["userId"]: user for user in row.get("memberUsers") or []}
+        for user_id in dict.fromkeys([*(row.get("userIds") or []), *members]):
+            if not user_id:
+                continue
+            user = users.get(user_id, {})
+            people.append({
+                "external_id": user_id, "organization_external_id": organization_id,
+                "full_name": user.get("fullName"), "position": user.get("position"),
+                "role": members.get(user_id, {}).get("projectParticipantRole") or user.get("participantRole"),
+                "signed": signatures.get(user_id), "email": user.get("emailAddress"),
+                "phone": user.get("phoneNumber"),
+            })
+        for contract in row.get("contracts") or []:
+            if isinstance(contract, dict):
+                external_id = contract.get("id") or contract.get("_id")
+                payload = contract
+            elif isinstance(contract, str):
+                external_id = contract
+                payload = {"id": contract}
+            else:
+                continue
+            contracts.append({
+                "external_id": external_id, "organization_external_id": organization_id, "payload": payload,
+            })
+    return {"organizations": organization_rows, "people": people, "contracts": contracts}
+
+
 def read_edo_teams(page, exchange_tab, module_tab):
     """Перехватывает штатный ответ ЭДО при открытии вкладки."""
     def is_members_response(response):
@@ -174,13 +218,23 @@ def read_edo_teams(page, exchange_tab, module_tab):
     project_id = MEMBERS_PATH.search(urlsplit(response.url).path)[1]
     organizations = response.json()
     details = summarize_teams(organizations)
+    signatures = {}
     if details["person_count"]:
         try:
             frame = open_participants_frame(response.request.frame, project_id)
-            unsigned = read_unsigned_from_cards(frame, organizations, details["person_count"])
+            unsigned = read_unsigned_from_cards(
+                frame, organizations, details["person_count"], signatures=signatures
+            )
         except (PlaywrightError, ValueError) as error:
             print(f"  Не удалось сверить подписи ЭДО: {str(error).splitlines()[0]}", file=sys.stderr)
+            details["signatures_error"] = "Не удалось сверить подписи ЭДО"
         else:
             details["unsigned_count"] = unsigned
     details["external_id"] = project_id
+    try:
+        details.update(collect_edo_records(organizations, signatures))
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
+        # Ошибка разбора подробных записей не обнуляет уже рассчитанные счётчики.
+        details["edo_records_error"] = f"Не удалось разобрать подробные записи ЭДО ({type(error).__name__})"
+        print(f"  {details['edo_records_error']}", file=sys.stderr)
     return details

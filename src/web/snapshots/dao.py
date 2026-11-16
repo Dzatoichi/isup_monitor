@@ -45,10 +45,10 @@ class SnapshotDAO:
         ))
 
     @staticmethod
-    def get_latest_ready(session: Session) -> Snapshot | None:
+    def get_latest_available(session: Session) -> Snapshot | None:
         statement = (
             select(Snapshot)
-            .where(Snapshot.status == "ready")
+            .where(Snapshot.status.in_(("ready", "partial")))
             .order_by(Snapshot.exported_on.desc(), Snapshot.id.desc())
             .limit(1)
         )

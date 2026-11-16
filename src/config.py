@@ -1,3 +1,4 @@
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -8,6 +9,11 @@ class Settings(BaseSettings):
     DB_USER: str
     DB_PASS: str
     DB_NAME: str
+    YANDEX_CLIENT_ID: str = ""
+    YANDEX_CLIENT_SECRET: SecretStr | None = None
+    YANDEX_REDIRECT_URI: str = ""
+    YANDEX_CORPORATE_DOMAIN: str = ""
+    WEB_COOKIE_SECURE: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env", 

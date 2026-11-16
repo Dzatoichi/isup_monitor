@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}ОКС №{{ project['Номер в ИСУП'] }} · ИСУП Монитор{% endblock %}
+{% block content %}
+<a class="back" href="/?snapshot_id={{ snapshot.id }}">← К объектам</a>
+<h1>{{ project['Объект'] or 'Объект без названия' }}</h1>
+<p class="muted">ОКС №{{ project['Номер в ИСУП'] }} · Снимок №{{ snapshot.id }} от {{ snapshot.exported_on.strftime('%d.%m.%Y') }}</p>
+<section class="panel">
+  <h2>Карточка объекта</h2>
+  <dl class="facts">
+  {% for label, value in project.items() %}
+    <div><dt>{{ label }}</dt><dd>{% if value is none or value == [] %}—{% elif value is sequence and value is not string %}{{ value|join(', ') }}{% else %}{{ value }}{% endif %}</dd></div>
+  {% endfor %}
+  </dl>
+</section>
+<section class="panel">
+  <h2>Участники ЭДО</h2>
+  {% if participants %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>ФИО</th><th>Организация</th><th>Роль</th><th>Должность</th><th>Подпись</th>{% if show_contacts %}<th>Почта</th><th>Телефон</th>{% endif %}</tr></thead>
+      <tbody>
+        {% for person in participants %}
+          <tr><td>{{ person.full_name or '—' }}</td><td>{{ person.organization or '—' }}</td>
+          <td>{{ person.role or '—' }}</td><td>{{ person.position or '—' }}</td>
+          <td>{% if person.signed is none %}Нет данных{% elif person.signed %}Подписан{% else %}Без подписи{% endif %}</td>
+          {% if show_contacts %}<td>{{ person.email or '—' }}</td><td>{{ person.phone or '—' }}</td>{% endif %}</tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  {% else %}
+    <p class="muted">В снимке нет записей об участниках.</p>
+  {% endif %}
+</section>
+<section class="panel">
+  <h2>Документация</h2>
+  {% if documents %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Дата</th><th>Номер</th><th>Название</th><th>Тип</th><th>Статус</th></tr></thead>
+      <tbody>
+        {% for document in documents %}
+          <tr><td>{{ document.document_on.strftime('%d.%m.%Y') if document.document_on else '—' }}</td>
+          <td>{{ document.document_number or '—' }}</td><td>{{ document.name or '—' }}</td>
+          <td>{{ document.document_type or '—' }}</td><td>{{ document.status or '—' }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  {% else %}
+    <p class="muted">В снимке нет записей о документах.</p>
+  {% endif %}
+</section>
+{% endblock %}

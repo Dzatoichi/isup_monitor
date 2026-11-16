@@ -9,7 +9,7 @@ class SnapshotService:
     @staticmethod
     async def resolve(session: AsyncSession, snapshot_id: int | None) -> Snapshot:
         if snapshot_id is None:
-            return await SnapshotService.get_latest_ready(session)
+            return await SnapshotService.get_latest_available(session)
         snapshot = await SnapshotDAO.get_by_id(session, snapshot_id)
         if snapshot is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Снимок не найден")
@@ -18,11 +18,11 @@ class SnapshotService:
         return snapshot
 
     @staticmethod
-    async def get_latest_ready(session: AsyncSession) -> Snapshot:
-        snapshot = await session.run_sync(SnapshotDAO.get_latest_ready)
+    async def get_latest_available(session: AsyncSession) -> Snapshot:
+        snapshot = await session.run_sync(SnapshotDAO.get_latest_available)
         if snapshot is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Нет готового снимка ИСУП",
+                detail="Нет завершённого снимка ИСУП",
             )
         return snapshot

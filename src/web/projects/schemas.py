@@ -9,6 +9,7 @@ from src.web.snapshots.schemas import SnapshotRead
 class ProjectFilters(BaseModel):
     snapshot_id: int | None = Field(default=None, gt=0, le=2147483647)
     stage: str | None = None
+    name: str | None = Field(default=None, max_length=500)
     state: str | None = None
     customer: str | None = None
     status: str | None = None
@@ -27,3 +28,4 @@ class ProjectList(BaseModel):
     items: list[ProjectRead]
     offset: int
     limit: int
+    total: int

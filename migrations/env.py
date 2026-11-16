@@ -4,6 +4,8 @@ from sqlalchemy.pool import NullPool
 
 from src.config import settings
 from src.shared.database import Base
+from src.web.auth import models as auth_models
+from src.web.users import models as user_models
 from src.web.contracts import models as contract_models
 from src.web.documents import models as document_models
 from src.web.organizations import models as organization_models

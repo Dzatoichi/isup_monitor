@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Объекты · ИСУП Монитор{% endblock %}
+{% block content %}
+<div class="heading">
+  <div>
+    <h1>Объекты капитального строительства</h1>
+    {% if result %}
+      <p class="muted">Снимок №{{ result.snapshot.id }} от {{ result.snapshot.exported_on.strftime('%d.%m.%Y') }}
+        {% if result.snapshot.status != 'ready' %} · {{ result.snapshot.status }}{% endif %}</p>
+      <p>Всего объектов: <strong>{{ result.total }}</strong></p>
+    {% endif %}
+  </div>
+  <span class="role">{{ role }}</span>
+</div>
+{% set active_filters = [filters.stage, filters.state, filters.customer, filters.status]|select|list|length %}
+{% set search = {'name': filters.name or '', 'snapshot_id': filters.snapshot_id or ''} %}
+<form method="get" action="/" class="panel project-toolbar">
+  <label class="project-search">Название объекта
+    <input type="search" name="name" maxlength="500" value="{{ filters.name or '' }}" placeholder="Введите название">
+  </label>
+  <label class="project-snapshot">Снимок №
+    <input type="number" name="snapshot_id" min="1" max="2147483647" value="{{ filters.snapshot_id or '' }}" placeholder="Последний завершённый">
+  </label>
+  {% for key in ['stage', 'state', 'customer', 'status'] %}
+    {% if filters[key] %}<input type="hidden" name="{{ key }}" value="{{ filters[key] }}">{% endif %}
+  {% endfor %}
+  <div class="project-actions">
+    <button type="submit">Найти</button>
+    <button type="button" class="secondary" aria-haspopup="dialog" aria-controls="project-filters"
+            onclick="document.getElementById('project-filters').showModal()">
+      Фильтры{% if active_filters %} <span class="filter-count">{{ active_filters }}</span>{% endif %}
+    </button>
+  </div>
+</form>
+<dialog id="project-filters" class="filter-dialog" aria-labelledby="filter-title"
+        onclose="this.querySelector('.filter-fields').reset()">
+  <header class="filter-header">
+    <h2 id="filter-title">Фильтры объектов</h2>
+    <form method="dialog"><button class="secondary" aria-label="Закрыть">×</button></form>
+  </header>
+  <form method="get" action="/" class="filter-fields">
+    <input type="hidden" name="name" value="{{ search.name }}">
+    <input type="hidden" name="snapshot_id" value="{{ search.snapshot_id }}">
+    <label>Стадия <select name="stage">
+      <option value="">Все</option>
+      {% for stage in ['ПИР', 'СМР'] %}
+        <option value="{{ stage }}" {% if filters.stage == stage %}selected{% endif %}>{{ stage }}</option>
+      {% endfor %}
+    </select></label>
+    <label>Состояние <input name="state" value="{{ filters.state or '' }}" placeholder="Все состояния"></label>
+    <label>Заказчик <input name="customer" value="{{ filters.customer or '' }}" placeholder="Все заказчики"></label>
+    <label>Статус <select name="status">
+      <option value="">Все</option>
+      {% for status in ['зелёный', 'жёлтый', 'красный', 'серый'] %}
+        <option value="{{ status }}" {% if filters.status == status %}selected{% endif %}>{{ status }}</option>
+      {% endfor %}
+    </select></label>
+    <footer class="filter-footer">
+      <a class="button secondary" href="/?{{ search|urlencode }}">Сбросить фильтры</a>
+      <button type="submit">Применить</button>
+    </footer>
+  </form>
+</dialog>
+{% if error %}
+  <p class="notice" role="status">{{ error }}. Если у вас есть номер пробного снимка, введите его в поле «Снимок №».</p>
+{% elif result.items %}
+  <div class="panel table-wrap">
+    <table>
+      <thead><tr><th>№ ИСУП</th><th>Объект</th><th>Стадия</th><th>Готовность</th><th>Участники</th><th>Статус</th></tr></thead>
+      <tbody>
+        {% for item in result.items %}
+          {% set row = item.root %}
+          <tr>
+            <td>{{ row['Номер в ИСУП'] }}</td>
+            <td><a href="/projects/{{ row['Номер в ИСУП'] }}?snapshot_id={{ result.snapshot.id }}">{{ row['Объект'] or 'Объект без названия' }}</a></td>
+            <td>{{ row['Стадия'] or '—' }}</td>
+            <td>{% if row['Готовность, %'] is not none %}{{ row['Готовность, %'] }}%{% else %}—{% endif %}</td>
+            <td>{{ row['Участников'] if row['Участников'] is not none else '—' }}</td>
+            <td><span class="status" data-status="{{ row['Статус'] or '' }}">{{ row['Статус'] or '—' }}</span></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="notice">По выбранным фильтрам объектов нет.</p>
+{% endif %}
+{% if result and page_count %}
+  {% set query = {'snapshot_id': result.snapshot.id, 'name': filters.name or '', 'stage': filters.stage or '', 'state': filters.state or '', 'customer': filters.customer or '', 'status': filters.status or ''} %}
+  {% set page_url = '/?' ~ (query|urlencode) ~ '&offset=' %}
+  <div class="pagination-summary">
+    <span>Показано {{ result.offset + 1 }}–{{ result.offset + (result.items|length) }} из {{ result.total }}</span>
+    <span>Страница {{ page }} из {{ page_count }}</span>
+  </div>
+  {% if page_count > 1 %}
+    <nav class="pagination" aria-label="Страницы объектов">
+      {% if page > 1 %}
+        <a class="button secondary" href="{{ page_url }}{{ (page - 2) * result.limit }}">Назад</a>
+      {% endif %}
+      {% if page > 3 %}
+        <a class="button secondary" href="{{ page_url }}0">1</a>
+        {% if page > 4 %}<span aria-hidden="true">…</span>{% endif %}
+      {% endif %}
+      {% for number in range([1, page - 2]|max, [page_count, page + 2]|min + 1) %}
+        {% if number == page %}
+          <span class="button" aria-current="page">{{ number }}</span>
+        {% else %}
+          <a class="button secondary" href="{{ page_url }}{{ (number - 1) * result.limit }}">{{ number }}</a>
+        {% endif %}
+      {% endfor %}
+      {% if page + 2 < page_count %}
+        {% if page + 3 < page_count %}<span aria-hidden="true">…</span>{% endif %}
+        <a class="button secondary" href="{{ page_url }}{{ (page_count - 1) * result.limit }}">{{ page_count }}</a>
+      {% endif %}
+      {% if page < page_count %}
+        <a class="button secondary" href="{{ page_url }}{{ page * result.limit }}">Дальше</a>
+      {% endif %}
+    </nav>
+  {% endif %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Пользователи · ИСУП Монитор{% endblock %}
+{% block content %}
+<h1>Пользователи</h1>
+{% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+<div class="user-list">
+  {% for account in users %}
+    <section class="panel user-row">
+      <div><h2>{{ account.name }}</h2><p class="muted">{{ account.email }} · №{{ account.id }}</p></div>
+      {% if account.id == user.id %}
+        <span class="role">{{ roles[account.role] }}</span>
+      {% else %}
+        <form method="post" action="/admin/users/{{ account.id }}" class="user-form">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <label>Роль <select name="role">
+            {% for key, label in roles.items() %}
+              <option value="{{ key }}" {% if key == account.role %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select></label>
+          <label>Номера ОКС для РП и заместителя
+            <input name="assignments" value="{{ assignments.get(account.id, [])|join(', ') }}" placeholder="3669, 4836">
+          </label>
+          <button type="submit">Сохранить</button>
+        </form>
+      {% endif %}
+    </section>
+  {% endfor %}
+</div>
+{% endblock %}

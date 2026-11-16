@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -20,12 +20,16 @@ class ProjectDAO:
         return session.execute(statement).scalar_one()
 
     @staticmethod
-    async def get_all(session: AsyncSession, snapshot_id: int, filters: ProjectFilters):
+    async def get_all(session: AsyncSession, snapshot_id: int, filters: ProjectFilters, scope: set[int] | None = None):
         statement = (
             select(Project.oks_number, ProjectSnapshot.report_data)
             .join(ProjectSnapshot, ProjectSnapshot.project_id == Project.id)
             .where(ProjectSnapshot.snapshot_id == snapshot_id)
         )
+        if scope is not None:
+            statement = statement.where(Project.oks_number.in_(scope))
+        if filters.name and filters.name.strip():
+            statement = statement.where(ProjectSnapshot.name.icontains(filters.name.strip(), autoescape=True))
         for field, value in (
             (ProjectSnapshot.stage, filters.stage),
             (ProjectSnapshot.state, filters.state),
@@ -34,10 +38,12 @@ class ProjectDAO:
         ):
             if value is not None:
                 statement = statement.where(field == value)
+        # Считаем все доступные строки до применения пагинации.
+        total = await session.scalar(select(func.count()).select_from(statement.subquery()))
         result = await session.execute(
             statement.order_by(Project.oks_number).offset(filters.offset).limit(filters.limit)
         )
-        return result.tuples().all()
+        return result.tuples().all(), total
 
     @staticmethod
     async def get_by_number(session: AsyncSession, snapshot_id: int, oks_number: int):

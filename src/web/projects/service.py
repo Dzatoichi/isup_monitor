@@ -10,14 +10,15 @@ from .schemas import ProjectFilters, ProjectList, ProjectRead
 
 class ProjectService:
     @staticmethod
-    async def get_all(session: AsyncSession, filters: ProjectFilters) -> ProjectList:
+    async def get_all(session: AsyncSession, filters: ProjectFilters, *, scope: set[int] | None = None) -> ProjectList:
         snapshot = await SnapshotService.resolve(session, filters.snapshot_id)
-        rows = await ProjectDAO.get_all(session, snapshot.id, filters)
+        rows, total = await ProjectDAO.get_all(session, snapshot.id, filters, scope)
         return ProjectList(
             snapshot=SnapshotRead.model_validate(snapshot),
             items=[ProjectRead.from_report(report) for _, report in rows],
             offset=filters.offset,
             limit=filters.limit,
+            total=total,
         )
 
     @staticmethod

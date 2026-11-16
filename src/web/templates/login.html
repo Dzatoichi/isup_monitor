@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Вход · ИСУП Монитор{% endblock %}
+{% block layout %}login-layout{% endblock %}
+{% block content %}
+<section class="panel login-panel">
+  <h1>Вход в ИСУП Монитор</h1>
+  <p class="muted">Используйте корпоративную учётную запись Яндекс ID.</p>
+  {% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+  {% if enabled %}
+    <a class="button" href="/auth/yandex">Войти через Яндекс ID</a>
+  {% else %}
+    <p class="notice">Вход через Яндекс ID ещё не настроен.</p>
+  {% endif %}
+</section>
+{% endblock %}

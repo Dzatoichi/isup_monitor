@@ -10,7 +10,12 @@
       <p>Всего объектов: <strong>{{ result.total }}</strong></p>
     {% endif %}
   </div>
-  <span class="role">{{ role }}</span>
+  <div class="project-actions">
+    <span class="role">{{ role }}</span>
+    {% if result %}
+      <a class="button secondary" href="/api/v1/projects/export.xlsx?snapshot_id={{ result.snapshot.id }}">Скачать снимок XLSX</a>
+    {% endif %}
+  </div>
 </div>
 {% set active_filters = [filters.stage, filters.state, filters.customer, filters.status]|select|list|length %}
 {% set search = {'name': filters.name or '', 'snapshot_id': filters.snapshot_id or ''} %}

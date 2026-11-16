@@ -1,11 +1,12 @@
 """Обход карточек ИСУП, сбор организаций и запуск выгрузки."""
 
 import argparse
+import asyncio
 import json
 import re
 import signal
 import sys
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 from datetime import datetime
 from itertools import count
 from time import monotonic
@@ -15,8 +16,10 @@ from playwright.sync_api import (
     TimeoutError as PlaywrightTimeoutError,
     sync_playwright,
 )
+from pydantic_core import to_jsonable_python
 
 from .auth import (
+    RegistryOpenError,
     VISIBLE_PROJECT_NAME,
     advance_registry_page,
     collect_current_page,
@@ -141,6 +144,35 @@ def open_project(cell, management_tab):
     cell.page.get_by_text("Пожалуйста, подождите...", exact=True).filter(
         visible=True
     ).first.wait_for(state="hidden", timeout=60000)
+
+
+def read_project_passport(page):
+    """Открывает паспорт и ждёт данные состояния и финансирования."""
+    labels = page.locator("div.tab span.label:visible")
+    information = labels.filter(
+        has_text=re.compile(r"^\s*Информация об объекте\s*$")
+    )
+    passport = labels.filter(
+        has_text=re.compile(r"^\s*Паспорт объекта\s*$")
+    )
+    active_information = information.locator("..").and_(page.locator(".active"))
+    active_passport = passport.locator("..").and_(page.locator(".active"))
+    deadline = monotonic() + 90
+    fields = {}
+    attempts = 0
+    while True:
+        if active_passport.is_visible():
+            fields.update(parse_passport(page.locator("body").inner_text()))
+        elif attempts < 3:
+            if not passport.is_visible() and not active_information.is_visible():
+                information.click(timeout=15000)
+            passport.wait_for(state="visible", timeout=30000)
+            passport.click(timeout=15000)
+            active_passport.wait_for(state="visible", timeout=15000)
+            attempts += 1
+        if {"state", "contract_cost", "spent"} <= fields.keys() or monotonic() >= deadline:
+            return fields
+        page.wait_for_timeout(500)
 
 
 def read_project_schedule(page, details):
@@ -291,16 +323,15 @@ def collect_projects_with_participants(page, *, limit=None, report=False, on_pro
                 details["oks_number"] = read_project_number(page)
                 # Паспорт читаем до перехода на вкладку организаций.
                 if report:
-                    for label, timeout in (
-                        ("Состояние объекта", 20000),
-                        ("Стоимость объекта (плановая)", 12000),
-                    ):
-                        field = page.get_by_text(label, exact=True).filter(visible=True).first
-                        try:
-                            field.wait_for(state="visible", timeout=timeout)
-                        except PlaywrightTimeoutError:
-                            print(f"  В паспорте не найдено поле «{label}»", file=sys.stderr)
-                    details.update(parse_passport(page.locator("body").inner_text()))
+                    try:
+                        passport_fields = read_project_passport(page)
+                        details.update(passport_fields)
+                        if "contract_cost" not in passport_fields:
+                            details["passport_error"] = "В паспорте объекта не считалась стоимость"
+                            print(f"  {details['passport_error']}", file=sys.stderr)
+                    except PlaywrightError as error:
+                        details["passport_error"] = "Не удалось открыть паспорт объекта"
+                        print(f"  {details['passport_error']}: {str(error).splitlines()[0]}", file=sys.stderr)
                     try:
                         try:
                             read_project_schedule(page, details)
@@ -360,11 +391,27 @@ def stop_on_sigterm(signum, frame):
     raise KeyboardInterrupt
 
 
+async def run_http(*, limit, on_project=None, concurrency=1):
+    """Открывает HTTP-сессию Playwright без браузера."""
+    from playwright.async_api import async_playwright
+
+    from .http_registry import read_http_registry
+
+    async with async_playwright() as playwright:
+        return await read_http_registry(
+            playwright, limit=limit, on_project=on_project, concurrency=concurrency
+        )
+
+
 def main():
     """Разбирает параметры запуска, собирает данные и печатает JSON."""
     cli = argparse.ArgumentParser(description="Сбор объектов и участников из ИСУП")
     cli.add_argument("--limit", type=int, help="Остановиться после указанного числа объектов")
     cli.add_argument("--headed", action="store_true", help="Показать окно браузера")
+    transport = cli.add_mutually_exclusive_group()
+    transport.add_argument("--http-registry", action="store_true", help="Прочитать реестр через HTTP без Chromium")
+    transport.add_argument("--http", action="store_true", help="Собрать подтверждённые поля ОКС без Chromium")
+    cli.add_argument("--concurrency", type=int, help="Число одновременно обрабатываемых объектов в режиме --http (по умолчанию 1)")
     cli.add_argument("--report", action="store_true", help="Выгрузить 34 поля отчёта «Объекты»")
     cli.add_argument("--save-db", action="store_true", help="Записать снимок в PostgreSQL")
     cli.add_argument("--exchange-threshold", type=int, default=7, help="Порог для вывода о днях без обмена")
@@ -373,9 +420,25 @@ def main():
         cli.error("--limit должен быть больше нуля")
     if args.exchange_threshold < 0:
         cli.error("--exchange-threshold должен быть неотрицательным")
+    if args.http and args.headed:
+        cli.error("--http используется без --headed")
+    if args.concurrency is not None:
+        if args.concurrency < 1:
+            cli.error("--concurrency должен быть больше нуля")
+        if not args.http:
+            cli.error("--concurrency используется только с --http")
+    if args.http_registry:
+        if args.headed or args.report or args.save_db:
+            cli.error("--http-registry выгружает строки реестра в JSON и используется без --headed, --report и --save-db")
+        try:
+            rows = asyncio.run(run_http(limit=args.limit))
+        except RegistryOpenError as error:
+            cli.exit(1, f"{error}\n")
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return
 
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=not args.headed)
+    with (nullcontext() if args.http else sync_playwright()) as playwright:
+        browser = None if args.http else playwright.chromium.launch(headless=not args.headed)
         try:
             ingestion = None
             if args.save_db:
@@ -387,13 +450,30 @@ def main():
             with redirect_stdout(sys.stderr):
                 previous_handler = signal.signal(signal.SIGTERM, stop_on_sigterm)
                 try:
-                    page = browser.new_page(viewport={"width": 1600, "height": 900})
-                    login(page)
-                    open_projects_registry(page)
-                    results, complete = collect_projects_with_participants(
-                        page, limit=args.limit, report=args.report or args.save_db,
-                        on_project=ingestion.save_project if ingestion is not None else None,
-                    )
+                    if browser is None:
+                        projects = {}
+
+                        def save_http_project(record):
+                            for field in ("edo_error", "signatures_error", "finance_error", "schedule_error"):
+                                if field in record:
+                                    print(f"ОКС №{record['oks_number']}: {record[field]}", file=sys.stderr)
+                            if ingestion is not None:
+                                ingestion.save_project(record)
+                            projects[record["oks_number"]] = record
+
+                        rows = asyncio.run(run_http(
+                            limit=args.limit, on_project=save_http_project, concurrency=args.concurrency or 1
+                        ))
+                        results = [projects[row["id_oks"]] for row in rows]
+                        complete = True
+                    else:
+                        page = browser.new_page(viewport={"width": 1600, "height": 900})
+                        login(page)
+                        open_projects_registry(page)
+                        results, complete = collect_projects_with_participants(
+                            page, limit=args.limit, report=args.report or args.save_db,
+                            on_project=ingestion.save_project if ingestion is not None else None,
+                        )
                 except BaseException as error:
                     if ingestion is not None:
                         try:
@@ -403,6 +483,9 @@ def main():
                     if isinstance(error, KeyboardInterrupt):
                         print("Выгрузка остановлена")
                         raise SystemExit(130) from None
+                    if isinstance(error, RegistryOpenError):
+                        print(f"Выгрузка остановлена: {error}")
+                        raise SystemExit(1) from None
                     raise
                 finally:
                     signal.signal(signal.SIGTERM, previous_handler)
@@ -419,15 +502,20 @@ def main():
                     for project in results
                 ]
             if not args.save_db or args.report:
-                print(json.dumps(output, ensure_ascii=False, indent=2))
+                print(json.dumps(to_jsonable_python(output), ensure_ascii=False, indent=2))
             errors = ("participants_error", "edo_error", "documents_error")
-            if (ingestion is not None and status == "failed") or not complete or any(
-                any(key in project for key in errors) for project in results
+            if ingestion is not None:
+                if status == "failed":
+                    raise SystemExit(1)
+            elif not complete or any(
+                any(key in errors or (args.http and key.endswith("_error")) for key in project)
+                for project in results
             ):
                 raise SystemExit(1)
         finally:
             try:
-                browser.close()
+                if browser is not None:
+                    browser.close()
             except Exception as error:
                 # Драйвер мог завершиться раньше браузера. Результат уже записан в stdout.
                 if "Connection closed while reading from the driver" not in str(error):

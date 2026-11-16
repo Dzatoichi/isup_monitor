@@ -1,6 +1,7 @@
 """Авторизация в ИСУП и чтение таблицы реестра ОКС."""
 
 import os
+from time import monotonic
 
 from dotenv import load_dotenv
 from playwright.sync_api import (
@@ -76,46 +77,60 @@ def login(page):
 # 2. Переход в реестр
 # ==========================================
 
+class RegistryOpenError(RuntimeError):
+    """Реестр ОКС не открылся или не загрузил строки."""
+
+
 def open_projects_registry(page):
-    """Открывает таблицу объектов капитального строительства."""
+    """Открывает ОКС и возвращает фокус в реестр, если ИСУП сменила вкладку."""
     project_name = page.locator(VISIBLE_PROJECT_NAME).first
     if project_name.is_visible():
         return
 
-    registry_icon = page.locator(
-        'img[src*="edinii_reestr_objectov.png"]'
-    )
-
+    registry_icon = page.locator('img[src*="edinii_reestr_objectov.png"]:visible').first
     registry_tab = page.locator(".el-tabs__item:visible").filter(
         has_text="Единый реестр объектов"
-    )
-    if not registry_tab.is_visible():
-        registry_icon.click()
-    registry_tab.click(timeout=30000)
-    print("Открыли единый реестр объектов")
-
+    ).first
+    active_tab = registry_tab.and_(page.locator(".is-active"))
     objects_button = page.locator("button:visible").filter(
         has_text="Объекты капитального строительства"
-    )
+    ).first
 
-    if not project_name.is_visible():
-        try:
-            objects_button.click(timeout=15000)
-        except PlaywrightTimeoutError as click_error:
-            active_tab = registry_tab.and_(page.locator(".is-active"))
-            if not active_tab.is_visible():
-                # ИСУП может вернуть фокус на главную при завершении авторизации.
-                registry_tab.click(timeout=15000)
-                if not project_name.is_visible():
-                    objects_button.click(timeout=30000)
-            else:
+    deadline = monotonic() + 90
+    activations = 0
+    objects_selected = False
+    print("Открываем реестр ОКС и ждём загрузки строк")
+    while monotonic() < deadline:
+        if project_name.is_visible():
+            print("Открыли объекты капитального строительства")
+            return
+        if page.get_by_placeholder("Логин").is_visible():
+            raise RegistryOpenError("ИСУП вернула на страницу входа при открытии реестра ОКС")
+
+        if not active_tab.is_visible():
+            target = registry_tab if registry_tab.is_visible() else registry_icon
+            if target.is_visible():
+                if activations >= 3:
+                    raise RegistryOpenError("ИСУП повторно переключает вкладку при открытии реестра ОКС")
+                activations += 1
+                if objects_selected or activations > 1:
+                    print("ИСУП переключила вкладку, возвращаемся в реестр ОКС")
                 try:
-                    project_name.wait_for(state="visible", timeout=30000)
+                    target.click(timeout=3000)
+                    active_tab.or_(project_name).first.wait_for(state="visible", timeout=5000)
                 except PlaywrightTimeoutError:
-                    raise click_error from None
+                    pass
+                objects_selected = False
+        elif not objects_selected and objects_button.is_visible() and objects_button.is_enabled():
+            try:
+                objects_button.click(timeout=3000)
+                objects_selected = True
+            except PlaywrightTimeoutError:
+                pass
 
-    project_name.wait_for(state="visible", timeout=30000)
-    print("Открыли объекты капитального строительства")
+        page.wait_for_timeout(500)
+
+    raise RegistryOpenError("ИСУП не показала строки реестра ОКС за 90 секунд")
 
 
 # ==========================================

@@ -2,6 +2,7 @@
 
 import re
 import sys
+from time import monotonic
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
@@ -45,80 +46,92 @@ def summarize_teams(rows):
     }
 
 
-def read_unsigned_from_cards(frame, organizations, person_count, *, signatures=None):
-    """Считает подписи по карточкам участников, открытым через меню ЭДО."""
+def read_unsigned_from_cards(frame, organizations, person_count, *, signatures=None, profiles=None):
+    """Читает данные и подписи из карточек участников ЭДО."""
     names = {}
     emails = {}
     for organization in organizations:
         for user in organization.get("users") or []:
-            if user.get("id") and user.get("fullName"):
-                names[user["id"]] = user["fullName"].casefold().split()
-                email = (user.get("emailAddress") or "").strip().casefold()
-                if email:
-                    emails.setdefault(email, set()).add(user["id"])
-    if len(names) != person_count:
-        raise ValueError(
-            f"ЭДО вернуло ФИО для {len(names)} из {person_count} участников"
-        )
+            user_id = user.get("id")
+            if not user_id:
+                continue
+            if user.get("fullName"):
+                names[user_id] = user["fullName"].casefold().split()
+            email = (user.get("emailAddress") or "").strip().casefold()
+            if email:
+                emails.setdefault(email, set()).add(user_id)
 
     cards = frame.locator(PARTICIPANT_CARD).filter(visible=True)
-    try:
-        cards.first.wait_for(state="visible", timeout=8000)
-    except PlaywrightTimeoutError:
-        # Список может открыться со свёрнутыми организациями.
-        pass
     if signatures is None:
         signatures = {}
 
     def remember_visible_cards():
         # В новой разметке подпись внутри карточки, в старой — рядом с её заголовком.
-        for name, email, signed in cards.evaluate_all("""(cards, selector) => cards.flatMap(card => {
+        for profile in cards.evaluate_all("""(cards, selector) => cards.flatMap(card => {
             const row = card.matches('.user-info-wrapper') ? card : card.parentElement;
             if (row !== card && (card.closest('.user-info-wrapper') ||
                 row.querySelectorAll(selector).length !== 1)) return [];
-            return [[card.querySelector('.user-info-content-title, .userInfoCardTitle')?.innerText || '',
-                     card.querySelector('a[href^="mailto:"]')?.getAttribute('href').slice(7) || '',
-                     Boolean(row.querySelector('.signer_signed'))]];
+            const text = (root, selector) => root?.querySelector(selector)?.innerText.trim() || null;
+            const roleGroup = card.closest('li')?.parentElement;
+            return [{
+                full_name: text(card, '.user-info-content-title, .userInfoCardTitle'),
+                position: text(card, '.user-info-content-primary-description'),
+                role: text(roleGroup, ':scope > li.MuiTypography-subtitle2'),
+                email: card.querySelector('a[href^="mailto:"]')?.getAttribute('href').slice(7).split('?')[0] || null,
+                phone: card.querySelector('a[href^="tel:"]')?.getAttribute('href').slice(4) || null,
+                signed: Boolean(row.querySelector('.signer_signed'))
+            }];
         })""", PARTICIPANT_CARD):
-            words = name.casefold().split()
-            matches = list(emails.get(email.strip().casefold(), ()))
+            words = (profile["full_name"] or "").casefold().split()
+            matches = list(emails.get((profile["email"] or "").strip().casefold(), ()))
             if len(matches) != 1 and words:
                 matches = [
                     user_id for user_id, full_name in names.items()
                     if full_name[:len(words)] == words
                 ]
             if len(matches) == 1:
-                signatures[matches[0]] = signatures.get(matches[0], False) or signed
+                user_id = matches[0]
+                signed = profile.pop("signed")
+                signatures[user_id] = signatures.get(user_id, False) or signed
+                if profiles is not None:
+                    profiles.setdefault(user_id, {}).update({
+                        key: value for key, value in profile.items() if value
+                    })
 
-    remember_visible_cards()
-    for organization in organizations:
+    opened_organizations = set()
+    deadline = monotonic() + 45
+    while True:
+        remember_visible_cards()
         if len(signatures) == person_count:
+            return person_count - sum(signatures.values())
+        if monotonic() >= deadline:
             break
-        users = organization.get("users") or []
-        if all(user.get("id") in signatures for user in users):
-            continue
-        info = organization.get("organization") or {}
-        for name in dict.fromkeys((info.get("shortName"), info.get("name"))):
-            if not name:
+
+        # После перехода по ссылке ЭДО может ещё загружать и организации, и карточки.
+        for index, organization in enumerate(organizations):
+            users = organization.get("users") or []
+            if index in opened_organizations or all(user.get("id") in signatures for user in users):
                 continue
-            label = frame.get_by_text(name, exact=True).filter(visible=True)
-            if label.count() == 1:
+            info = organization.get("organization") or {}
+            for name in dict.fromkeys((info.get("shortName"), info.get("name"))):
+                if not name:
+                    continue
+                label = frame.get_by_text(name, exact=True).filter(visible=True)
+                if label.count() != 1:
+                    continue
                 expander = label.locator('xpath=ancestor-or-self::*[@aria-expanded][1]')
                 if expander.count() == 1:
                     if expander.get_attribute("aria-expanded") == "false":
                         expander.click(timeout=3000)
+                elif monotonic() < deadline - 37:
+                    # Даём уже открытым карточкам время появиться до клика по заголовку.
+                    continue
                 else:
                     label.click(timeout=3000)
-                for _ in range(10):
-                    remember_visible_cards()
-                    if all(user.get("id") in signatures for user in users):
-                        break
-                    frame.wait_for_timeout(300)
-                remember_visible_cards()
+                opened_organizations.add(index)
                 break
+        frame.wait_for_timeout(500)
 
-    if len(signatures) == person_count:
-        return person_count - sum(signatures.values())
     raise ValueError(
         f"сопоставлено карточек {len(signatures)} из {person_count}, "
         f"на открытом экране видно {cards.count()}"
@@ -148,7 +161,7 @@ def open_participants_frame(module_frame, project_id):
     raise ValueError("В модуле заказчика (ЭДО) не найдено меню ⚏ для открытия участников")
 
 
-def collect_edo_records(organizations, signatures):
+def collect_edo_records(organizations, signatures, profiles=None):
     """Сохраняет доступные строки ЭДО и подтверждённые признаки подписи."""
     organization_rows = []
     people = []
@@ -169,12 +182,18 @@ def collect_edo_records(organizations, signatures):
             if not user_id:
                 continue
             user = users.get(user_id, {})
+            profile = (profiles or {}).get(user_id, {})
+            # В карточке бывает сокращённое ФИО. Полное имя из состава команды сохраняем.
+            full_name = user.get("fullName")
+            card_name = profile.get("full_name")
+            if card_name and len(card_name.split()) > len((full_name or "").split()):
+                full_name = card_name
             people.append({
                 "external_id": user_id, "organization_external_id": organization_id,
-                "full_name": user.get("fullName"), "position": user.get("position"),
-                "role": members.get(user_id, {}).get("projectParticipantRole") or user.get("participantRole"),
-                "signed": signatures.get(user_id), "email": user.get("emailAddress"),
-                "phone": user.get("phoneNumber"),
+                "full_name": full_name, "position": profile.get("position") or user.get("position"),
+                "role": members.get(user_id, {}).get("projectParticipantRole") or profile.get("role") or user.get("participantRole"),
+                "signed": signatures.get(user_id), "email": profile.get("email") or user.get("emailAddress"),
+                "phone": profile.get("phone") or user.get("phoneNumber"),
             })
         for contract in row.get("contracts") or []:
             if isinstance(contract, dict):
@@ -200,7 +219,7 @@ def read_edo_teams(page, exchange_tab, module_tab):
 
     # ЭДО может грузиться в отдельном окне. Подписываемся до открытия обеих вкладок.
     try:
-        with page.context.expect_event("response", predicate=is_members_response, timeout=60000) as pending:
+        with page.context.expect_event("response", predicate=is_members_response, timeout=120000) as pending:
             exchange_tab.click(timeout=45000)
             module_tab.click(timeout=45000)
     except PlaywrightTimeoutError:
@@ -209,21 +228,24 @@ def read_edo_teams(page, exchange_tab, module_tab):
             raise
         # При повторном открытии журнала и ЭДО встроенная страница загружается заново.
         journal_tab.click(timeout=10000)
-        with page.context.expect_event("response", predicate=is_members_response, timeout=25000) as pending:
+        print("  ЭДО не вернуло состав команды, открываем модуль повторно", file=sys.stderr)
+        with page.context.expect_event("response", predicate=is_members_response, timeout=90000) as pending:
             module_tab.click(timeout=15000)
     response = pending.value
     if not response.ok:
         raise ValueError(f"Модуль ЭДО вернул HTTP {response.status}")
 
-    project_id = MEMBERS_PATH.search(urlsplit(response.url).path)[1]
+    project_id = MEMBERS_PATH.search(urlsplit(response.url).path)[1] # type: ignore
     organizations = response.json()
     details = summarize_teams(organizations)
     signatures = {}
+    profiles = {}
     if details["person_count"]:
         try:
             frame = open_participants_frame(response.request.frame, project_id)
             unsigned = read_unsigned_from_cards(
-                frame, organizations, details["person_count"], signatures=signatures
+                frame, organizations, details["person_count"],
+                signatures=signatures, profiles=profiles,
             )
         except (PlaywrightError, ValueError) as error:
             print(f"  Не удалось сверить подписи ЭДО: {str(error).splitlines()[0]}", file=sys.stderr)
@@ -232,7 +254,7 @@ def read_edo_teams(page, exchange_tab, module_tab):
             details["unsigned_count"] = unsigned
     details["external_id"] = project_id
     try:
-        details.update(collect_edo_records(organizations, signatures))
+        details.update(collect_edo_records(organizations, signatures, profiles))
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         # Ошибка разбора подробных записей не обнуляет уже рассчитанные счётчики.
         details["edo_records_error"] = f"Не удалось разобрать подробные записи ЭДО ({type(error).__name__})"

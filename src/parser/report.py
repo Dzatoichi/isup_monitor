@@ -58,7 +58,10 @@ def parse_date(value):
     if isinstance(value, date):
         return value
     if value:
-        for pattern in ("%d.%m.%Y", "%d.%m.%Y, %H:%M:%S", "%Y-%m-%d", "%m/%d/%Y, %I:%M:%S %p"):
+        for pattern in (
+            "%d.%m.%Y", "%d.%m.%Y, %H:%M:%S", "%Y-%m-%d",
+            "%Y-%m-%d %H:%M:%S", "%m/%d/%Y, %I:%M:%S %p",
+        ):
             try:
                 return datetime.strptime(value, pattern).date()
             except ValueError:

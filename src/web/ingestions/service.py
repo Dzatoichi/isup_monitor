@@ -20,7 +20,15 @@ class IngestionQueryService:
     @staticmethod
     async def get_all(session: AsyncSession, *, offset: int, limit: int) -> list[IngestionRunRead]:
         runs = await IngestionDAO.get_all(session, offset=offset, limit=limit)
-        return [IngestionRunRead.model_validate(run) for run in runs]
+        results = []
+        for run in runs:
+            # В журнале показываем время по Красноярску, включая старые запуски.
+            entry = IngestionRunRead.model_validate(run)
+            entry.started_at = entry.started_at.astimezone(REPORT_TIMEZONE)
+            if entry.finished_at is not None:
+                entry.finished_at = entry.finished_at.astimezone(REPORT_TIMEZONE)
+            results.append(entry)
+        return results
 
 
 class IngestionService:
@@ -87,7 +95,13 @@ class IngestionService:
         elif not complete or not self.seen_numbers:
             errors.append({"message": "Обход реестра не завершён или снимок пуст"})
 
-        status = "failed" if errors or self.has_errors else "partial" if limited else "ready"
+        # Ошибки отдельных объектов оставляют пригодные для просмотра данные.
+        if errors:
+            status = "failed"
+        elif limited or self.has_errors:
+            status = "partial"
+        else:
+            status = "ready"
         with self.sessions.begin() as session:
             IngestionDAO.finish_run(session, self.run_id, self.snapshot_id, status, errors)
         return status

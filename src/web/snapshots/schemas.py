@@ -10,3 +10,4 @@ class SnapshotRead(BaseModel):
     run_id: int
     exported_on: date
     status: str
+    regulation_id: int | None = None

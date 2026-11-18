@@ -1,6 +1,7 @@
 from datetime import date
 
 from sqlalchemy import ForeignKeyConstraint, Date, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.shared.database import Base
@@ -24,3 +25,8 @@ class DocumentOperationSnapshot(Base):
     name: Mapped[str | None] = mapped_column(Text)
     document_type: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str | None] = mapped_column(Text)
+
+    external_id: Mapped[str | None] = mapped_column(Text)
+    author: Mapped[str | None] = mapped_column(Text)
+    section: Mapped[str | None] = mapped_column(Text)
+    source_data: Mapped[dict | None] = mapped_column(JSONB)

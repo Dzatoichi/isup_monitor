@@ -454,7 +454,7 @@ def main():
                         projects = {}
 
                         def save_http_project(record):
-                            for field in ("edo_error", "signatures_error", "finance_error", "schedule_error"):
+                            for field in ("edo_error", "signatures_error", "finance_error", "schedule_error", "pir_error"):
                                 if field in record:
                                     print(f"ОКС №{record['oks_number']}: {record[field]}", file=sys.stderr)
                             if ingestion is not None:

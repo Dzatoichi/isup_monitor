@@ -74,8 +74,9 @@ def display_date(value):
     return value.strftime("%d.%m.%Y") if value is not None else None
 
 
-def make_object_report(project, *, exported_on, exchange_threshold=7):
+def make_object_report(project, *, exported_on, exchange_threshold=7, rules=None):
     """Формирует 34 поля отчёта из данных одного объекта и рассчитывает показатели."""
+    rules = rules or project.get("_traffic_rules") or {}
     # Текущий список participants содержит организации. Для подсчёта людей нужны отдельные данные.
     organizations = project.get("participants")
     organization_count = project.get("edo_organization_count")
@@ -121,6 +122,10 @@ def make_object_report(project, *, exported_on, exchange_threshold=7):
                 inactive_days = (exported_on - last).days
 
     tracked = project.get("exchange_tracked")
+    if tracked is None and operations:
+        tracked = True
+    if tracked is None and project.get("edo_organization_count") is not None:
+        tracked = True
     if "приостанов" in (project.get("state") or "").casefold():
         tracked = False
     without_team = project.get("organizations_without_team")
@@ -129,9 +134,21 @@ def make_object_report(project, *, exported_on, exchange_threshold=7):
     stagnation = project.get("progress_stalled_8_weeks") if stage == "СМР" else (
         False if stage else None
     )
+    required = rules.get("required_fields", ("name", "stage", "state", "progress", "customer",
+                "construction_deputy", "project_manager", "contract_cost"))
     required_missing = project.get("required_fields_missing")
+    if required_missing is None:
+        required_missing = any(
+            project.get(key) is None or isinstance(project.get(key), str) and not project[key].strip()
+            for key in required
+        )
+        if "progress" in required:
+            progress_value = project.get("progress")
+            required_missing |= type(progress_value) is not int or not 0 <= progress_value <= 100
+        if stage in {"ПИР", "СМР"}:
+            required_missing |= dates[f"Начало {stage}, план"] is None or dates[f"Окончание {stage}, план"] is None
     too_many_unsigned = (
-        unsigned * 2 > people if people is not None and unsigned is not None else None
+        unsigned * 100 > people * rules.get("unsigned_red_percent", 50) if people is not None and unsigned is not None else None
     )
     status = None
     reasons = []
@@ -149,25 +166,24 @@ def make_object_report(project, *, exported_on, exchange_threshold=7):
 
         # None означает, что условие нельзя проверить. Красный имеет приоритет над жёлтым.
         red = (
-            inactive_days > 14 if inactive_days is not None else False if total == 0 else None,
-            overdue > 30 if overdue is not None else None,
+            inactive_days >= rules.get("exchange_red_days", 15) if inactive_days is not None else False if total == 0 else None,
+            overdue >= rules.get("overdue_red_days", 31) if overdue is not None else None,
             stagnation,
             too_many_unsigned,
         )
         yellow = (
-            inactive_days >= 8 if inactive_days is not None else False if total == 0 else None,
+            inactive_days >= rules.get("exchange_yellow_days", 8) if inactive_days is not None else False if total == 0 else None,
             overdue > 0 if overdue is not None else None,
             without_team > 0 if without_team is not None else None,
             required_missing,
         )
-        if tracked is True:
-            if any(red):
-                status = "красный"
-            elif all(value is False for value in red):
-                if any(yellow):
-                    status = "жёлтый"
-                elif all(value is False for value in yellow):
-                    status = "зелёный"
+        # Недостающие сведения требуют проверки. Подтверждённый красный имеет приоритет.
+        if any(red):
+            status = "красный"
+        elif tracked is None or any(yellow) or any(value is None for value in (*red, *yellow)):
+            status = "жёлтый"
+        else:
+            status = "зелёный"
         if status == "зелёный" and not reasons:
             reasons.append("нет проблем")
 

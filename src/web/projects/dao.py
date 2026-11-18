@@ -54,10 +54,29 @@ class ProjectDAO:
         ):
             if value is not None:
                 statement = statement.where(field == value)
+        for label, value in (("Руководитель проекта", filters.manager), ("Строительный заместитель", filters.deputy)):
+            if value and value.strip():
+                statement = statement.where(ProjectSnapshot.report_data[label].astext.icontains(value.strip(), autoescape=True))
+        if filters.no_exchange is not None:
+            condition = ProjectSnapshot.operations_last_7_days == 0
+            statement = statement.where(condition if filters.no_exchange else ProjectSnapshot.operations_last_7_days > 0)
+        if filters.overdue is not None:
+            statement = statement.where(ProjectSnapshot.overdue_days > 0 if filters.overdue else ProjectSnapshot.overdue_days == 0)
+        sort_column = {
+            "number": Project.oks_number, "progress": ProjectSnapshot.progress,
+            "last_operation": ProjectSnapshot.last_operation_on, "inactive_days": ProjectSnapshot.days_without_exchange,
+            "cost": ProjectSnapshot.contract_cost, "pir_end": ProjectSnapshot.pir_plan_end,
+            "smr_end": ProjectSnapshot.smr_plan_end,
+        }[filters.sort]
+        ordering = []
+        if filters.group != "none":
+            label = "Руководитель проекта" if filters.group == "manager" else "Строительный заместитель"
+            ordering.append(ProjectSnapshot.report_data[label].astext.asc().nulls_last())
+        ordering.extend(((sort_column.desc() if filters.descending else sort_column.asc()).nulls_last(), Project.oks_number))
         # Считаем все доступные строки до применения пагинации.
         total = await session.scalar(select(func.count()).select_from(statement.subquery()))
         result = await session.execute(
-            statement.order_by(Project.oks_number).offset(filters.offset).limit(filters.limit)
+            statement.order_by(*ordering).offset(filters.offset).limit(filters.limit)
         )
         return result.tuples().all(), total
 

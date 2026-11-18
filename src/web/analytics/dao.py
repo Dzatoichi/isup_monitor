@@ -19,6 +19,17 @@ class AnalyticsDAO:
         return (await session.execute(statement)).all()
 
     @staticmethod
+    async def get_source_issues(session, snapshot_id, scope):
+        statement = (
+            select(Project.oks_number, ProjectSnapshot.source_data)
+            .join(ProjectSnapshot, ProjectSnapshot.project_id == Project.id)
+            .where(ProjectSnapshot.snapshot_id == snapshot_id)
+        )
+        if scope is not None:
+            statement = statement.where(Project.oks_number.in_(scope))
+        return (await session.execute(statement)).all()
+
+    @staticmethod
     async def get_snapshots(session, snapshot, since=None):
         statement = (
             select(Snapshot)

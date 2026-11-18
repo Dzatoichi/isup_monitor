@@ -17,7 +17,7 @@
     {% endif %}
   </div>
 </div>
-{% set active_filters = [filters.stage, filters.state, filters.customer, filters.status]|select|list|length %}
+{% set active_filters = [filters.stage, filters.state, filters.customer, filters.status, filters.manager, filters.deputy, filters.no_exchange is not none, filters.overdue is not none]|select|list|length %}
 {% set search = {'name': filters.name or '', 'snapshot_id': filters.snapshot_id or ''} %}
 <form method="get" action="/" class="panel project-toolbar">
   <label class="project-search">Название объекта
@@ -26,9 +26,12 @@
   <label class="project-snapshot">Снимок №
     <input type="number" name="snapshot_id" min="1" max="2147483647" value="{{ filters.snapshot_id or '' }}" placeholder="Последний завершённый">
   </label>
-  {% for key in ['stage', 'state', 'customer', 'status'] %}
+  {% for key in ['stage', 'state', 'customer', 'status', 'manager', 'deputy', 'sort', 'group'] %}
     {% if filters[key] %}<input type="hidden" name="{{ key }}" value="{{ filters[key] }}">{% endif %}
   {% endfor %}
+  {% if filters.no_exchange is not none %}<input type="hidden" name="no_exchange" value="{{ 'true' if filters.no_exchange else 'false' }}">{% endif %}
+  {% if filters.overdue is not none %}<input type="hidden" name="overdue" value="{{ 'true' if filters.overdue else 'false' }}">{% endif %}
+  <input type="hidden" name="descending" value="{{ 'true' if filters.descending else 'false' }}">
   <div class="project-actions">
     <button type="submit">Найти</button>
     <button type="button" class="secondary" aria-haspopup="dialog" aria-controls="project-filters"
@@ -60,6 +63,26 @@
         <option value="{{ status }}" {% if filters.status == status %}selected{% endif %}>{{ status }}</option>
       {% endfor %}
     </select></label>
+    <label>Руководитель проекта <input name="manager" value="{{ filters.manager or '' }}"></label>
+    <label>Строительный заместитель <input name="deputy" value="{{ filters.deputy or '' }}"></label>
+    {% for key, title in [('no_exchange', 'Нет операций за 7 дней'), ('overdue', 'Есть просрочка')] %}
+      <label>{{ title }} <select name="{{ key }}">
+        <option value="">Все</option>
+        <option value="true"{% if filters[key] is sameas true %} selected{% endif %}>Да</option>
+        <option value="false"{% if filters[key] is sameas false %} selected{% endif %}>Нет</option>
+      </select></label>
+    {% endfor %}
+    <label>Сортировка <select name="sort">
+      {% for key, title in [('number', 'Номер ОКС'), ('progress', 'Готовность'), ('last_operation', 'Последняя операция'), ('inactive_days', 'Дней без обмена'), ('cost', 'Стоимость'), ('pir_end', 'Окончание ПИР'), ('smr_end', 'Окончание СМР')] %}
+        <option value="{{ key }}"{% if filters.sort == key %} selected{% endif %}>{{ title }}</option>
+      {% endfor %}
+    </select></label>
+    <label>Порядок <select name="descending"><option value="false">По возрастанию</option><option value="true"{% if filters.descending %} selected{% endif %}>По убыванию</option></select></label>
+    <label>Группировать <select name="group">
+      {% for key, title in [('none', 'Без группировки'), ('manager', 'По РП'), ('deputy', 'По заместителю')] %}
+        <option value="{{ key }}"{% if filters.group == key %} selected{% endif %}>{{ title }}</option>
+      {% endfor %}
+    </select></label>
     <footer class="filter-footer">
       <a class="button secondary" href="/?{{ search|urlencode }}">Сбросить фильтры</a>
       <button type="submit">Применить</button>
@@ -75,6 +98,12 @@
       <tbody>
         {% for item in result.items %}
           {% set row = item.root %}
+          {% if filters.group != 'none' %}
+            {% set group_label = 'Руководитель проекта' if filters.group == 'manager' else 'Строительный заместитель' %}
+            {% if loop.first or row.get(group_label) != result.items[loop.index0 - 1].root.get(group_label) %}
+              <tr><th colspan="6">{{ row.get(group_label) or 'Ответственный не задан' }}</th></tr>
+            {% endif %}
+          {% endif %}
           <tr>
             <td>{{ row['Номер в ИСУП'] }}</td>
             <td><a href="/projects/{{ row['Номер в ИСУП'] }}?snapshot_id={{ result.snapshot.id }}">{{ row['Объект'] or 'Объект без названия' }}</a></td>
@@ -91,7 +120,7 @@
   <p class="notice">По выбранным фильтрам объектов нет.</p>
 {% endif %}
 {% if result and page_count %}
-  {% set query = {'snapshot_id': result.snapshot.id, 'name': filters.name or '', 'stage': filters.stage or '', 'state': filters.state or '', 'customer': filters.customer or '', 'status': filters.status or ''} %}
+  {% set query = pagination_query %}
   {% set page_url = '/?' ~ (query|urlencode) ~ '&offset=' %}
   <div class="pagination-summary">
     <span>Показано {{ result.offset + 1 }}–{{ result.offset + (result.items|length) }} из {{ result.total }}</span>

@@ -16,6 +16,7 @@ class Snapshot(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    regulation_id: Mapped[int | None] = mapped_column(ForeignKey("regulations.id"))
     run_id: Mapped[int] = mapped_column(ForeignKey(IngestionRun.id), unique=True)
     exported_on: Mapped[date]
     status: Mapped[str] = mapped_column(String(12))

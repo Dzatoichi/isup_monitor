@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, RootModel
 
@@ -13,6 +13,13 @@ class ProjectFilters(BaseModel):
     state: str | None = None
     customer: str | None = None
     status: str | None = None
+    manager: str | None = None
+    deputy: str | None = None
+    no_exchange: bool | None = None
+    overdue: bool | None = None
+    sort: Literal["number", "progress", "last_operation", "inactive_days", "cost", "pir_end", "smr_end"] = "number"
+    descending: bool = False
+    group: Literal["none", "manager", "deputy"] = "none"
     offset: int = Field(default=0, ge=0)
     limit: int = Field(default=50, ge=1, le=200)
 

@@ -1,4 +1,6 @@
-from typing import Annotated
+from datetime import date
+
+from typing import Annotated, Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
@@ -7,9 +9,11 @@ from fastapi.responses import RedirectResponse
 from src.web.auth.dependencies import OptionalUser
 from src.web.auth.service import csrf_token
 from src.web.dependencies import DatabaseSession
+from src.web.pir.dao import PirDocumentDAO
 from src.web.documents.dao import DocumentDAO
 from src.web.participants.service import ParticipantService
 from src.web.snapshots.service import SnapshotService
+from src.web.regulations.models import Regulation
 from src.web.users.models import ROLES
 from src.web.users.service import UserService
 from src.web.views import templates
@@ -28,6 +32,10 @@ async def projects_page(
     snapshot_id: str = "", offset: Annotated[int, Query(ge=0)] = 0,
     stage: str = "", state: str = "", customer: str = "", status: str = "",
     name: Annotated[str, Query(max_length=500)] = "",
+    manager: str = "", deputy: str = "",
+    no_exchange: Literal["", "true", "false"] = "", overdue: Literal["", "true", "false"] = "",
+    sort: Literal["number", "progress", "last_operation", "inactive_days", "cost", "pir_end", "smr_end"] = "number",
+    descending: bool = False, group: Literal["none", "manager", "deputy"] = "none",
 ):
     if user is None:
         return RedirectResponse("/login", status_code=303)
@@ -41,6 +49,9 @@ async def projects_page(
     filters = ProjectFilters(
         snapshot_id=int(snapshot_id) if snapshot_id else None, offset=offset, stage=stage or None, state=state or None,
         customer=customer or None, status=status or None, name=name.strip() or None,
+        manager=manager.strip() or None, deputy=deputy.strip() or None,
+        no_exchange=None if not no_exchange else no_exchange == "true",
+        overdue=None if not overdue else overdue == "true", sort=sort, descending=descending, group=group,
     )
     scope = await UserService.project_scope(session, user)
     context["filters"] = filters
@@ -51,9 +62,14 @@ async def projects_page(
         page_offset = (page - 1) * result.limit
         if result.offset != page_offset:
             query = dict(request.query_params)
-            query.update(snapshot_id=result.snapshot.id, offset=page_offset)
+            query.update(snapshot_id=result.snapshot.id, offset=page_offset) # type: ignore
             return RedirectResponse("/?" + urlencode(query), status_code=303)
         context.update(result=result, page=page, page_count=page_count)
+        pagination_query = filters.model_dump(exclude={"offset", "limit"}, exclude_none=True)
+        pagination_query["snapshot_id"] = result.snapshot.id
+        pagination_query = {key: str(value).lower() if isinstance(value, bool) else value
+                            for key, value in pagination_query.items()}
+        context["pagination_query"] = pagination_query
     except HTTPException as error:
         if error.status_code not in {404, 409}:
             raise
@@ -65,7 +81,7 @@ async def projects_page(
 async def project_page(
     request: Request, session: DatabaseSession, user: OptionalUser,
     oks_number: Annotated[int, Path(gt=0, le=9223372036854775807)], snapshot_id: SnapshotId = None,
-    history_type: str = "",
+    history_type: str = "", since: str = "", until: str = "",
 ):
     if user is None:
         return RedirectResponse("/login", status_code=303)
@@ -79,13 +95,23 @@ async def project_page(
         session, oks_number, snapshot.id, show_contacts=show_contacts
     )
     documents = await DocumentDAO.get_for_project(session, snapshot.id, oks_number)
+    pir_documents = await PirDocumentDAO.get_for_project(session, snapshot.id, oks_number)
     history_types = ProjectService.HISTORY_FIELDS
     if history_type and history_type not in history_types:
         raise HTTPException(422, "Неизвестный тип события")
-    history = await ProjectService.get_history(session, oks_number, snapshot, history_type)
+    try:
+        since = date.fromisoformat(since) if since else None
+        until = date.fromisoformat(until) if until else None
+    except ValueError:
+        raise HTTPException(422, "Некорректная дата периода") from None
+    if since and until and since > until:
+        raise HTTPException(422, "Начало периода позже окончания")
+    history = await ProjectService.get_history(session, oks_number, snapshot, history_type, since, until)
+    charts = await ProjectService.get_charts(session, oks_number, snapshot, documents)
+    regulation = await session.get(Regulation, snapshot.regulation_id) if snapshot.regulation_id else None
     return templates.TemplateResponse(request, "project.html", {
         "user": user, "csrf": csrf_token(request), "project": project.root,
         "snapshot": snapshot, "participants": participants.items, "show_contacts": show_contacts,
-        "documents": documents,
-        "history": history, "history_type": history_type, "history_types": history_types,
+        "documents": documents, "pir_documents": pir_documents,
+        "regulation": regulation, "charts": charts, "since": since, "until": until, "history": history, "history_type": history_type, "history_types": history_types,
     })

@@ -1,6 +1,7 @@
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
+from src.web.pir.models import PirDocumentSnapshot
 from src.web.contracts.models import ProjectContractSnapshot
 from src.web.documents.models import DocumentOperationSnapshot
 from src.web.organizations.models import ProjectOrganizationSnapshot
@@ -17,6 +18,7 @@ class RelatedSnapshotDAO:
             (ProjectParticipantSnapshot, record.get("people")),
             (ProjectContractSnapshot, record.get("contracts")),
             (DocumentOperationSnapshot, record.get("documents")),
+            (PirDocumentSnapshot, record.get("pir_documents")),
         )
         for model, rows in sections:
             if rows is None:

@@ -4,6 +4,7 @@
 <a class="back" href="/?snapshot_id={{ snapshot.id }}">← К объектам</a>
 <h1>{{ project['Объект'] or 'Объект без названия' }}</h1>
 <p class="muted">ОКС №{{ project['Номер в ИСУП'] }} · Снимок №{{ snapshot.id }} от {{ snapshot.exported_on.strftime('%d.%m.%Y') }}</p>
+{% if regulation %}<p class="muted">Регламент {{ regulation.version }} · действует с {{ regulation.effective_on.strftime('%d.%m.%Y') }}</p>{% endif %}
 <section class="panel">
   <h2>Карточка объекта</h2>
   <dl class="facts">
@@ -34,18 +35,45 @@
   <h2>Документация</h2>
   {% if documents %}
     <div class="table-wrap"><table>
-      <thead><tr><th>Дата</th><th>Номер</th><th>Название</th><th>Тип</th><th>Статус</th></tr></thead>
+      <thead><tr><th>Дата</th><th>Номер</th><th>Название</th><th>Тип</th><th>Статус</th><th>Автор</th><th>Раздел</th></tr></thead>
       <tbody>
         {% for document in documents %}
           <tr><td>{{ document.document_on.strftime('%d.%m.%Y') if document.document_on else '—' }}</td>
           <td>{{ document.document_number or '—' }}</td><td>{{ document.name or '—' }}</td>
-          <td>{{ document.document_type or '—' }}</td><td>{{ document.status or '—' }}</td></tr>
+          <td>{{ document.document_type or '—' }}</td><td>{{ document.status or '—' }}</td><td>{{ document.author or '—' }}</td><td>{{ document.section or '—' }}</td></tr>
         {% endfor %}
       </tbody>
     </table></div>
   {% else %}
     <p class="muted">В снимке нет записей о документах.</p>
   {% endif %}
+</section>
+<section class="panel">
+  <h2>Проектная и рабочая документация</h2>
+  {% if pir_documents %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Вид</th><th>Шифр</th><th>Название</th><th>Раздел</th><th>Версия</th><th>Статус</th>
+      <th>Создан</th><th>Согласован</th><th>Передан заказчику</th><th>Выдан в работу</th><th>Замечания</th><th>Просрочка, дн.</th></tr></thead>
+      <tbody>{% for doc in pir_documents %}
+        <tr><td>{{ doc.kind }}</td><td>{{ doc.cipher or '—' }}</td><td>{{ doc.name or '—' }}</td><td>{{ doc.section or '—' }}</td>
+        <td>{{ doc.version if doc.version is not none else '—' }}</td><td>{{ doc.status or '—' }}</td>
+        {% for day in [doc.created_on, doc.approved_on, doc.transferred_on, doc.issued_on] %}<td>{{ day.strftime('%d.%m.%Y') if day else '—' }}</td>{% endfor %}
+        <td>{{ doc.remark_count if doc.remark_count is not none else '—' }}</td><td>{{ doc.delay_days if doc.delay_days is not none else '—' }}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+  {% else %}<p class="muted">В выбранном снимке нет записей ПД/РД. Ошибки сбора доступны в разделе «Полнота данных».</p>{% endif %}
+</section>
+<section class="panel">
+  <h2>Готовность и документооборот за 8 недель</h2>
+  <p class="muted">Готовность по последнему наблюдению недели. Операции по датам документов выбранного снимка.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Неделя с</th><th>Готовность, %</th><th>Документы</th></tr></thead>
+    <tbody>{% for day, progress, count in charts %}
+      <tr><td>{{ day.strftime('%d.%m.%Y') }}</td>
+        <td>{% if progress is not none %}<meter min="0" max="100" value="{{ progress }}" aria-label="Готовность {{ progress }} процентов"></meter> {{ progress }}%{% else %}Нет наблюдения{% endif %}</td>
+        <td><meter min="0" max="{{ [1, charts|map(attribute=2)|max]|max }}" value="{{ count }}" aria-label="{{ count }} документов"></meter> {{ count }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
 </section>
 <section class="panel" id="history">
   <h2>Хронология изменений</h2>
@@ -59,6 +87,8 @@
         {% endfor %}
       </select>
     </label>
+    <label>С <input type="date" name="since" value="{{ since.isoformat() if since else '' }}"></label>
+    <label>По <input type="date" name="until" value="{{ until.isoformat() if until else '' }}"></label>
     <button type="submit">Показать</button>
   </form>
   {% if history %}
@@ -68,7 +98,7 @@
         <tbody>
           {% for snapshot_id, day, field, before, after in history %}
             <tr><td>{{ day.strftime('%d.%m.%Y') }}</td><td>{{ snapshot_id }}</td><td>{{ field }}</td>
-            <td>{{ before }}</td><td>{{ after }}</td></tr>
+            <td>{{ before|event_value }}</td><td>{{ after|event_value }}</td></tr>
           {% endfor %}
         </tbody>
       </table>

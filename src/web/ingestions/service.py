@@ -7,6 +7,13 @@ from pydantic_core import to_jsonable_python
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, sessionmaker
 
+from src.web.assignments.models import Assignment
+from src.web.regulations.dao import RegulationDAO
+from src.web.regulations.schemas import TrafficRules
+from src.web.snapshots.models import Snapshot
+from src.web.events.dao import EventDAO
+
+from src.parser.validation import validate_record
 from src.parser.report import REPORT_TIMEZONE, make_object_report
 from src.web.projects.dao import ProjectDAO
 from src.web.snapshots.dao import SnapshotDAO
@@ -39,11 +46,29 @@ class IngestionService:
         self.has_errors = False
         self.seen_numbers: set[int] = set()
         with sessions.begin() as session:
+            regulation = RegulationDAO.ensure_applicable(session, self.exported_on)
+            self.rules = TrafficRules.model_validate(regulation.rules if regulation else {}).model_dump()
             self.run_id, self.snapshot_id = IngestionDAO.start_run(session, self.exported_on)
+            session.get_one(Snapshot, self.snapshot_id).regulation_id = regulation.id if regulation else None
 
     def save_project(self, record: dict[str, Any]) -> None:
+        validate_record(record)
+        record["_traffic_rules"] = self.rules
+        if record.get("oks_number"):
+            with self.sessions.begin() as session:
+                assignment = session.get(Assignment, record["oks_number"])
+                if assignment:
+                    for key, value in (("project_manager", assignment.manager), ("construction_deputy", assignment.deputy)):
+                        if not record.get(key) or not str(record[key]).strip():
+                            record[key] = value
+        if record.get("stage") == "СМР" and record.get("oks_number"):
+            with self.sessions.begin() as session:
+                project_id = ProjectDAO.upsert(session, record["oks_number"])
+                record["progress_stalled_8_weeks"] = SnapshotDAO.progress_stalled(
+                    session, project_id, self.exported_on, record.get("progress"), self.rules["stagnation_days"]
+                )
         report = make_object_report(
-            record, exported_on=self.exported_on, exchange_threshold=self.exchange_threshold
+            record, exported_on=self.exported_on, exchange_threshold=self.exchange_threshold, rules=self.rules
         )
         number = report["Номер в ИСУП"]
         errors = [
@@ -63,8 +88,9 @@ class IngestionService:
         with self.sessions.begin() as session:
             if number:
                 project_id = ProjectDAO.upsert(session, number)
-                related_keys = {"organizations", "people", "contracts", "documents"}
+                related_keys = {"organizations", "people", "contracts", "documents", "pir_documents"}
                 source = {key: value for key, value in record.items() if key not in related_keys}
+                source["sections_read"] = {key: record.get(key) is not None for key in related_keys}
                 SnapshotDAO.upsert_project(
                     session, self.snapshot_id, project_id, self.exported_on,
                     to_jsonable_python(source), report,
@@ -103,5 +129,7 @@ class IngestionService:
         else:
             status = "ready"
         with self.sessions.begin() as session:
+            if status in {"ready", "partial"}:
+                EventDAO.capture(session, self.snapshot_id)
             IngestionDAO.finish_run(session, self.run_id, self.snapshot_id, status, errors)
         return status

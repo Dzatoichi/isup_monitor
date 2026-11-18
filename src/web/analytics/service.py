@@ -2,6 +2,9 @@ from collections import defaultdict
 from datetime import timedelta
 from statistics import mean
 
+from src.web.regulations.models import Regulation
+from src.web.regulations.schemas import TrafficRules
+
 from .dao import AnalyticsDAO
 
 
@@ -62,14 +65,26 @@ class AnalyticsService:
     @staticmethod
     async def completeness(session, snapshot, scope):
         reports = await AnalyticsDAO.get_reports(session, [snapshot.id], scope)
+        sources = dict(await AnalyticsDAO.get_source_issues(session, snapshot.id, scope))
+        regulation = await session.get(Regulation, snapshot.regulation_id) if snapshot.regulation_id else None
+        rules = TrafficRules.model_validate(regulation.rules if regulation else {})
+        labels = {
+            "name": "Объект", "stage": "Стадия", "state": "Состояние", "progress": "Готовность, %",
+            "customer": "Заказчик", "construction_deputy": "Строительный заместитель",
+            "project_manager": "Руководитель проекта", "contract_cost": "Стоимость по договорам, руб.",
+            "spent": "Освоено, руб.", "risks": "Риски", "external_id": "Идентификатор в ВИС",
+        }
         entries = []
         for _, number, row in reports:
             stage = row.get("Стадия")
-            fields = ["Объект", "Стадия", "Состояние", "Готовность, %", "Заказчик",
-                      "Строительный заместитель", "Руководитель проекта", "Стоимость по договорам, руб."]
+            fields = [labels[key] for key in rules.required_fields]
             if stage in {"ПИР", "СМР"}:
                 fields.extend((f"Начало {stage}, план", f"Окончание {stage}, план"))
             missing = [field for field in fields if is_missing(row.get(field))]
+            source = sources.get(number, {})
+            missing.extend(str(value) for key, value in source.items() if key.endswith("_error"))
+            if source.get("operation_dates") is not None:
+                missing.append("Дата поступления операции не подтверждена; используется дата документа")
             if missing:
                 entries.append((number, row, missing))
         return entries

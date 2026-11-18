@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Правила светофора · ИСУП Монитор{% endblock %}
+{% block content %}
+<h1>Правила светофора</h1>
+<p class="muted">Новая версия применяется к следующим выгрузкам с указанной даты. Сохранённые статусы используют прежнюю версию.</p>
+{% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+<section class="panel">
+  <h2>Новая версия регламента</h2>
+  <form method="post" class="filters">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Версия <input name="version" maxlength="120" required></label>
+    <label>Действует с <input type="date" name="effective_on" required></label>
+    {% for label, key, maximum in [
+      ('Жёлтый, дней без обмена от', 'exchange_yellow_days', 3650),
+      ('Красный, дней без обмена от', 'exchange_red_days', 3650),
+      ('Красный, просрочка от', 'overdue_red_days', 3650),
+      ('Красный, доля без подписи более, %', 'unsigned_red_percent', 100),
+      ('Нет роста готовности, дней', 'stagnation_days', 365)
+    ] %}
+      <label>{{ label }} <input type="number" name="{{ key }}" value="{{ rules[key] }}" min="{{ 0 if key == 'unsigned_red_percent' else 7 if key == 'stagnation_days' else 1 }}" max="{{ maximum }}" required></label>
+    {% endfor %}
+    <label>Обязательные поля через запятую
+      <textarea name="required_fields" rows="4" required>{% for key in rules.required_fields %}{{ field_labels[key] }}{% if not loop.last %}, {% endif %}{% endfor %}</textarea>
+    </label>
+    <button>Создать версию</button>
+  </form>
+</section>
+<section class="panel table-wrap">
+  <h2>Версии</h2>
+  <table><thead><tr><th>Версия</th><th>Действует с</th><th>Обмен, жёлтый / красный</th><th>Просрочка, красный</th><th>Без подписи, %</th><th>Стагнация, дней</th></tr></thead>
+    <tbody>{% for version in versions %}<tr>
+      <td>{{ version.version }}</td><td>{{ version.effective_on.strftime('%d.%m.%Y') }}</td>
+      <td>{{ version.rules.exchange_yellow_days }} / {{ version.rules.exchange_red_days }}</td>
+      <td>{{ version.rules.overdue_red_days }}</td><td>{{ version.rules.unsigned_red_percent }}</td><td>{{ version.rules.stagnation_days }}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endblock %}

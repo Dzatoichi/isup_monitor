@@ -87,3 +87,7 @@ dd { margin: 3px 0 0; }
 .filter-header h2 { margin: 0; }
 .filter-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 16px; }
 .filter-footer { grid-column: 1 / -1; border-top: 1px solid var(--border); padding-top: 16px; margin-top: 4px; }
+
+meter { width: min(75%, 300px); height: 18px; vertical-align: middle; margin-right: 8px; }
+
+textarea { font: inherit; padding: 8px 12px; border: 1px solid #a8b7cd; border-radius: 7px; max-width: 100%; }

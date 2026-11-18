@@ -10,6 +10,7 @@ from playwright.async_api import Error as PlaywrightError
 
 from .auth import RegistryOpenError
 from .edo import collect_edo_records, summarize_teams
+from .pir import read_pir_documents
 from .report import parse_date, parse_passport
 
 
@@ -64,11 +65,12 @@ async def read_http_registry(playwright, *, limit=None, on_project=None, concurr
                 edo_token = token.strip()
             return edo_token
 
-    async def get_edo_members(path, params):
+    async def get_edo_members(path, params, *, method="GET", payload=None):
         token = await get_edo_token()
         for attempt in range(2):
-            response = await edo_client.get(
-                path, params=params, headers={"Authorization": f"Bearer {token}"}, max_redirects=0
+            assert edo_client is not None
+            response = await edo_client.fetch(
+                path, method=method, data=payload, params=params, headers={"Authorization": f"Bearer {token}"}, max_redirects=0
             )
             if response.status != 401 or attempt == 1:
                 return response
@@ -107,7 +109,7 @@ async def read_http_registry(playwright, *, limit=None, on_project=None, concurr
                 finally:
                     await response.dispose()
             if unauthorized:
-                await refresh_auth(session)
+                await refresh_auth(session) # type: ignore
                 refreshed = True
                 continue
             await asyncio.sleep(delay)
@@ -141,7 +143,7 @@ async def read_http_registry(playwright, *, limit=None, on_project=None, concurr
             if refresh_error is not None:
                 raise RegistryOpenError(refresh_error)
             try:
-                renewed = await authenticate()
+                renewed = await authenticate() # type: ignore
                 if renewed["id"] != expired_session["id"]:
                     raise RegistryOpenError("ИСУП вернула другую учётную запись")
             except RegistryOpenError as error:
@@ -262,6 +264,12 @@ async def read_project(request, row, get_edo_members):
             str(error) if isinstance(error, RegistryOpenError) else "Не удалось разобрать ответ ЭДО"
         )
 
+    if project.get("external_id"):
+        try:
+            project["pir_documents"] = await read_pir_documents(get_edo_members, project["external_id"])
+        except (RegistryOpenError, ValueError, TypeError) as error:
+            project["pir_error"] = str(error) if isinstance(error, RegistryOpenError) else "Не удалось разобрать ПД/РД"
+
     try:
         documents = await read_http_documents(request, card.get("attr_169_"))
     except RegistryOpenError as error:
@@ -348,6 +356,9 @@ async def read_http_documents(request, object_id):
             document_on = parse_date(value) if isinstance(value, str) else None
             documents.append({
                 "document_on": document_on,
+                "external_id": str(record_id),
+                "author": row.get("create_user_name"),
+                "source_data": row,
                 "document_number": row.get("doc_num"),
                 "name": row.get("doc_name"),
                 "document_type": row.get("type_name"),

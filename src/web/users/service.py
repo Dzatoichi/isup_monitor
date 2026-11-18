@@ -1,4 +1,6 @@
 from fastapi import HTTPException
+from sqlalchemy import select
+from src.web.assignments.models import Assignment
 
 from .dao import UserDAO
 from .models import ROLES, SCOPED_ROLES
@@ -8,7 +10,10 @@ class UserService:
     @staticmethod
     async def project_scope(session, user):
         if user.role in SCOPED_ROLES:
-            return await UserDAO.get_assignments(session, user.id)
+            explicit = await UserDAO.get_assignments(session, user.id)
+            column = Assignment.manager_email if user.role == "manager" else Assignment.deputy_email
+            assigned = set(await session.scalars(select(Assignment.oks_number).where(column == user.email.lower())))
+            return explicit | assigned
         if user.role in {"admin", "leadership", "analyst"}:
             return None
         raise HTTPException(403, "Роль ещё не назначена")

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Закрепления · ИСУП Монитор{% endblock %}
+{% block content %}
+<h1>Закрепления ответственных</h1>
+<p class="muted">Данные из ИСУП имеют приоритет. Закрепления применяются при следующей выгрузке.</p>
+{% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+<section class="panel">
+  <h2>Импорт из Excel</h2>
+  <p><a href="/admin/assignments/template.xlsx">Скачать шаблон</a></p>
+  <form id="assignment-upload" class="filters">
+    <label>Файл XLSX <input type="file" accept=".xlsx" required></label>
+    <button>Загрузить</button>
+  </form>
+  <p id="upload-result" role="status"></p>
+</section>
+<section class="panel">
+  <h2>Добавить или изменить</h2>
+  <form method="post" class="filters">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% for label, key in columns.items() %}
+      <label>{{ label }} <input name="{{ key }}" {% if key == 'oks_number' %}type="number" min="1" required{% elif key.endswith('_email') %}type="email"{% else %}maxlength="500"{% endif %}></label>
+    {% endfor %}
+    <button>Сохранить</button>
+  </form>
+</section>
+<section class="panel table-wrap">
+  <table><thead><tr>{% for label in columns %}<th>{{ label }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for row in rows %}<tr>{% for key in columns.values() %}<td>{{ row[key] or '—' }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table>
+</section>
+<script>
+document.getElementById('assignment-upload').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button');
+  const output = document.getElementById('upload-result');
+  button.disabled = true;
+  try {
+    const response = await fetch('/admin/assignments/import', {
+      method: 'POST', headers: {'X-CSRF-Token': {{ csrf|tojson }}},
+      body: form.querySelector('input[type=file]').files[0]
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Не удалось загрузить файл');
+    location.reload();
+  } catch (error) {
+    output.textContent = error.message;
+    button.disabled = false;
+  }
+});
+</script>
+{% endblock %}

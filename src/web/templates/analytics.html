@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · ИСУП Монитор{% endblock %}
+{% block content %}
+<div class="heading">
+  <div>
+    <h1>{{ title }}</h1>
+    {% if snapshot %}<p class="muted">Снимок №{{ snapshot.id }} от {{ snapshot.exported_on.strftime('%d.%m.%Y') }}</p>{% endif %}
+  </div>
+  <form class="filters" method="get">
+    <label>Снимок № <input name="snapshot_id" type="number" min="1" max="2147483647" value="{{ snapshot.id if snapshot else '' }}" required></label>
+    <button>Открыть</button>
+  </form>
+</div>
+{% if error %}
+  <p class="notice" role="status">{{ error }}</p>
+{% elif screen == 'summary' %}
+  <section class="panel" aria-label="Показатели выбранного снимка">
+    <dl class="facts">
+      {% for label, key in [
+        ('Объекты', 'objects'), ('ПИР', 'pir'), ('СМР', 'smr'), ('Зелёные', 'green'),
+        ('Жёлтые', 'yellow'), ('Красные', 'red'), ('С обменом за 7 дней', 'with_exchange'),
+        ('Без операций за 7 дней', 'without_exchange'), ('Участники без подписи', 'unsigned'),
+        ('Объекты с просрочкой', 'overdue')
+      ] %}
+        <div><dt>{{ label }}</dt><dd>{{ metrics[key] if metrics[key] is not none else '—' }}</dd></div>
+      {% endfor %}
+    </dl>
+    <p class="muted">Данные об операциях доступны по {{ metrics.operation_coverage }} из {{ metrics.objects }} объектов.</p>
+  </section>
+  <section class="panel table-wrap">
+    <h2>Динамика за 8 недель</h2>
+    <p class="muted">За каждую неделю показан последний доступный снимок и операции за 7 дней на его дату.</p>
+    <table>
+      <thead><tr><th>Неделя с</th><th>Снимок</th><th>Объекты</th><th>К предыдущей неделе</th><th>Готовность, %</th><th>Операции</th><th>Без операций</th><th>Красные</th></tr></thead>
+      <tbody>
+        {% for day, item, values, delta in weeks %}
+          {% if item %}
+            <tr>
+              <td>{{ day.strftime('%d.%m.%Y') }}</td><td><a href="?snapshot_id={{ item.id }}">{{ item.id }}</a></td>
+              <td>{{ values.objects }}</td><td>{{ '%+d'|format(delta) if delta is not none else '—' }}</td>
+              <td>{{ values.progress if values.progress is not none else '—' }}</td>
+              <td>{{ values.operation_count if values.operation_count is not none else '—' }}</td>
+              <td>{{ values.without_exchange }}</td><td>{{ values.red }}</td>
+            </tr>
+          {% else %}
+            <tr><td>{{ day.strftime('%d.%m.%Y') }}</td><td colspan="7" class="muted">Нет снимка</td></tr>
+          {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% elif rows %}
+  <div class="panel table-wrap">
+    <table>
+      <thead><tr><th>Объект</th><th>Руководитель проекта</th><th>Строительный заместитель</th>
+        {% if screen == 'problems' %}<th>Статус</th><th>Вывод</th><th>Дней по истории</th>{% else %}<th>Пустые поля</th>{% endif %}
+      </tr></thead>
+      <tbody>
+        {% for number, report, detail in rows %}
+          <tr>
+            <td><a href="/projects/{{ number }}?snapshot_id={{ snapshot.id }}">{{ report.get('Объект') or number }}</a></td>
+            <td>{{ report.get('Руководитель проекта') or '—' }}</td><td>{{ report.get('Строительный заместитель') or '—' }}</td>
+            {% if screen == 'problems' %}
+              <td><span class="status" data-status="{{ report['Статус'] }}">{{ report['Статус'] }}</span></td><td>{{ report.get('Вывод') or '—' }}</td><td>{{ detail }}</td>
+            {% else %}
+              <td>{{ detail|join(', ') }}</td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="notice">В выбранном снимке нет записей для этого отчёта.</p>
+{% endif %}
+{% endblock %}

@@ -1,9 +1,11 @@
 from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from src.web.analytics.router import router as analytics_router
 from src.web.auth.dependencies import require_admin, require_reader
 from src.web.auth.router import router as auth_router
 from src.web.ingestions.pages import router as ingestion_pages
+from src.web.participants.pages import router as participant_pages
 from src.web.projects.pages import router as project_pages
 from src.web.users.router import router as users_router
 from src.web.views import WEB_DIR
@@ -23,6 +25,8 @@ app.include_router(participants_router, prefix="/api/v1")
 app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
 app.include_router(auth_router)
 app.include_router(project_pages)
+app.include_router(analytics_router)
+app.include_router(participant_pages)
 app.include_router(users_router)
 app.include_router(ingestion_pages)
 

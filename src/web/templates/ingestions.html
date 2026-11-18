@@ -4,11 +4,13 @@
 <h1>Журнал выгрузок</h1>
 {% if runs %}
   <div class="panel table-wrap"><table>
-    <thead><tr><th>Запуск №</th><th>Начало</th><th>Окончание</th><th>Объектов</th><th>Статус</th></tr></thead>
+    <thead><tr><th>Запуск №</th><th>Начало</th><th>Окончание</th><th>Длительность</th><th>Объектов</th><th>Статус</th></tr></thead>
     <tbody>
       {% for run in runs %}
         <tr><td>{{ run.id }}</td><td>{{ run.started_at.strftime('%d.%m.%Y %H:%M %z') }}</td>
         <td>{{ run.finished_at.strftime('%d.%m.%Y %H:%M %z') if run.finished_at else '—' }}</td>
+        {% set duration = run.duration_seconds %}
+        <td>{% if duration is not none %}{{ "%02d:%02d:%02d"|format(duration // 3600, duration // 60 % 60, duration % 60) }}{% else %}—{% endif %}</td>
         <td>{{ run.processed_count }}</td><td>{{ run.status }}</td></tr>
       {% endfor %}
     </tbody>

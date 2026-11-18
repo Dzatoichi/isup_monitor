@@ -12,7 +12,13 @@
     <a class="brand" href="/">ИСУП Монитор</a>
     {% if user %}
       <nav aria-label="Основное меню">
-        {% if user.role != 'guest' %}<a href="/">Объекты</a>{% endif %}
+        {% if user.role != 'guest' %}
+          <a href="/analytics/summary">Сводка</a>
+          <a href="/">Объекты</a>
+          <a href="/analytics/problems">Проблемные</a>
+          <a href="/analytics/completeness">Полнота данных</a>
+          <a href="/participants">Участники и подписи</a>
+        {% endif %}
         {% if user.role == 'admin' %}
           <a href="/admin/users">Пользователи</a>
           <a href="/admin/ingestions">Журнал выгрузок</a>

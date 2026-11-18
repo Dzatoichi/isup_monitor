@@ -65,6 +65,7 @@ async def projects_page(
 async def project_page(
     request: Request, session: DatabaseSession, user: OptionalUser,
     oks_number: Annotated[int, Path(gt=0, le=9223372036854775807)], snapshot_id: SnapshotId = None,
+    history_type: str = "",
 ):
     if user is None:
         return RedirectResponse("/login", status_code=303)
@@ -78,8 +79,13 @@ async def project_page(
         session, oks_number, snapshot.id, show_contacts=show_contacts
     )
     documents = await DocumentDAO.get_for_project(session, snapshot.id, oks_number)
+    history_types = ProjectService.HISTORY_FIELDS
+    if history_type and history_type not in history_types:
+        raise HTTPException(422, "Неизвестный тип события")
+    history = await ProjectService.get_history(session, oks_number, snapshot, history_type)
     return templates.TemplateResponse(request, "project.html", {
         "user": user, "csrf": csrf_token(request), "project": project.root,
         "snapshot": snapshot, "participants": participants.items, "show_contacts": show_contacts,
         "documents": documents,
+        "history": history, "history_type": history_type, "history_types": history_types,
     })

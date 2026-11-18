@@ -47,4 +47,34 @@
     <p class="muted">В снимке нет записей о документах.</p>
   {% endif %}
 </section>
+<section class="panel" id="history">
+  <h2>Хронология изменений</h2>
+  <form method="get" action="/projects/{{ project['Номер в ИСУП'] }}#history" class="filters">
+    <input type="hidden" name="snapshot_id" value="{{ snapshot.id }}">
+    <label>Тип события
+      <select name="history_type">
+        <option value="">Все</option>
+        {% for kind in history_types %}
+          <option value="{{ kind }}"{% if kind == history_type %} selected{% endif %}>{{ kind }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">Показать</button>
+  </form>
+  {% if history %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Дата обнаружения</th><th>Снимок</th><th>Поле</th><th>Было</th><th>Стало</th></tr></thead>
+        <tbody>
+          {% for snapshot_id, day, field, before, after in history %}
+            <tr><td>{{ day.strftime('%d.%m.%Y') }}</td><td>{{ snapshot_id }}</td><td>{{ field }}</td>
+            <td>{{ before }}</td><td>{{ after }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="muted">В доступных снимках нет подтверждённых изменений по выбранным полям.</p>
+  {% endif %}
+</section>
 {% endblock %}

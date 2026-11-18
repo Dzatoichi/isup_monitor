@@ -1,6 +1,7 @@
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.parser.report import DATE_FIELDS
 from src.web.snapshots.schemas import SnapshotRead
 from src.web.snapshots.service import SnapshotService
 
@@ -9,6 +10,31 @@ from .schemas import ProjectFilters, ProjectList, ProjectRead
 
 
 class ProjectService:
+    HISTORY_FIELDS = {
+        "Характеристики": ("Стадия", "Состояние", "Готовность, %"),
+        "Сроки": tuple(DATE_FIELDS),
+        "Финансы": ("Стоимость по договорам, руб.", "Освоено, руб.", "Остаток, руб."),
+        "Ответственные": ("Строительный заместитель", "Руководитель проекта"),
+        "Светофор": ("Статус", "Вывод"),
+    }
+
+    @staticmethod
+    async def get_history(session, oks_number, snapshot, category):
+        rows = await ProjectDAO.get_history(session, oks_number, snapshot)
+        events = []
+        for previous, current in zip(rows, rows[1:]):
+            snapshot_id, observed_on, report = current
+            old_report = previous[2]
+            for group, fields in ProjectService.HISTORY_FIELDS.items():
+                if category and category != group:
+                    continue
+                for field in fields:
+                    before, after = old_report.get(field), report.get(field)
+                    # Пропуск значения может означать, что раздел не считался.
+                    if before is not None and after is not None and before != after:
+                        events.append((snapshot_id, observed_on, field, before, after))
+        return list(reversed(events))
+
     @staticmethod
     async def get_all(session: AsyncSession, filters: ProjectFilters, *, scope: set[int] | None = None) -> ProjectList:
         snapshot = await SnapshotService.resolve(session, filters.snapshot_id)

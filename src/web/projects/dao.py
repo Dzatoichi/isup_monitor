@@ -1,7 +1,8 @@
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
+from src.web.snapshots.models import Snapshot
 
 from .projects_model import Project, ProjectSnapshot
 from .schemas import ProjectFilters
@@ -9,6 +10,21 @@ from .schemas import ProjectFilters
 
 class ProjectDAO:
     """Записывает постоянные идентификаторы объектов ИСУП."""
+
+    @staticmethod
+    async def get_history(session, oks_number, snapshot):
+        statement = (
+            select(Snapshot.id, Snapshot.exported_on, ProjectSnapshot.report_data)
+            .join(ProjectSnapshot, ProjectSnapshot.snapshot_id == Snapshot.id)
+            .join(Project, Project.id == ProjectSnapshot.project_id)
+            .where(
+                Project.oks_number == oks_number,
+                Snapshot.status.in_(("ready", "partial")),
+                tuple_(Snapshot.exported_on, Snapshot.id) <= (snapshot.exported_on, snapshot.id),
+            )
+            .order_by(Snapshot.exported_on, Snapshot.id)
+        )
+        return (await session.execute(statement)).all()
 
     @staticmethod
     def upsert(session: Session, oks_number: int) -> int:

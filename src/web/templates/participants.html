@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Участники и подписи · ИСУП Монитор{% endblock %}
+{% block content %}
+<h1>Участники и подписи</h1>
+{% if snapshot %}<p class="muted">Снимок №{{ snapshot.id }} от {{ snapshot.exported_on.strftime('%d.%m.%Y') }}</p>{% endif %}
+<form method="get" class="panel filters">
+  <label>Организация <input name="organization" value="{{ organization }}" maxlength="300"></label>
+  <label>Роль <input name="role" value="{{ participant_role }}" maxlength="300"></label>
+  <label>Подпись <select name="signature">
+    {% for key, label in [('all', 'Все'), ('signed', 'Подписан'), ('unsigned', 'Без подписи'), ('unknown', 'Нет данных')] %}
+      <option value="{{ key }}"{% if key == signature %} selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select></label>
+  {% if snapshot %}<input type="hidden" name="snapshot_id" value="{{ snapshot.id }}">{% endif %}
+  <button>Найти</button>
+</form>
+{% if error %}
+  <p class="notice">{{ error }}</p>
+{% elif rows %}
+  <section class="panel table-wrap">
+    <h2>По организациям</h2>
+    <table>
+      <thead><tr><th>Организация</th><th>Объектов</th><th>Участников без подписи</th></tr></thead>
+      <tbody>{% for name, projects, unsigned in counts %}
+        <tr><td>{{ name }}</td><td>{{ projects }}</td><td>{{ unsigned }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+  </section>
+  <section class="panel table-wrap">
+    <h2>Реестр участников</h2>
+    <table>
+      <thead><tr><th>Объект</th><th>Организация</th><th>ФИО</th><th>Должность</th><th>Роль</th><th>Подпись</th>
+        {% if show_contacts %}<th>Почта</th><th>Телефон</th>{% endif %}</tr></thead>
+      <tbody>{% for number, name, org_id, org_name, participant in rows %}
+        <tr><td><a href="/projects/{{ number }}?snapshot_id={{ snapshot.id }}">{{ name or number }}</a></td>
+          <td>{{ org_name or '—' }}</td><td>{{ participant.full_name or '—' }}</td>
+          <td>{{ participant.position or '—' }}</td><td>{{ participant.role or '—' }}</td>
+          <td>{% if participant.signed is none %}Нет данных{% elif participant.signed %}Подписан{% else %}Без подписи{% endif %}</td>
+          {% if show_contacts %}<td>{{ participant.email or '—' }}</td><td>{{ participant.phone or '—' }}</td>{% endif %}
+        </tr>
+      {% endfor %}</tbody>
+    </table>
+  </section>
+{% else %}
+  <p class="notice">По выбранным условиям записей об участниках нет.</p>
+{% endif %}
+{% endblock %}

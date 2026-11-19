@@ -8,6 +8,8 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 
+from src.web.assignments.expressions import current_project_report
+from src.web.assignments.models import Assignment
 from src.parser.report import REPORT_FIELDS, parse_date
 from src.web.pir.models import PirDocumentSnapshot
 from src.web.documents.models import DocumentOperationSnapshot
@@ -43,8 +45,10 @@ DATE_COLUMNS = frozenset({
 
 async def load_export_rows(session, snapshot_id, scope, *, show_contacts):
     # Все дочерние записи выбираются только для объектов, доступных пользователю.
-    query = (select(Project.id, Project.oks_number, ProjectSnapshot.report_data, ProjectSnapshot.source_data)
+    """Выбирает данные снимка только по доступным объектам. Контакты добавляются по правам пользователя."""
+    query = (select(Project.id, Project.oks_number, current_project_report(), ProjectSnapshot.source_data)
              .join(ProjectSnapshot, ProjectSnapshot.project_id == Project.id)
+             .outerjoin(Assignment, Assignment.oks_number == Project.oks_number)
              .where(ProjectSnapshot.snapshot_id == snapshot_id).order_by(Project.oks_number))
     if scope is not None:
         query = query.where(Project.oks_number.in_(scope))
@@ -104,6 +108,7 @@ async def load_export_rows(session, snapshot_id, scope, *, show_contacts):
 
 
 def build_workbook(rows, *, show_contacts):
+    """Создаёт листы XLSX, форматирует даты и подсвечивает пустые значения. Текст источника сохраняется как текст ячейки."""
     workbook = Workbook()
     workbook.remove(workbook.active) # type: ignore
     missing = PatternFill("solid", fgColor="FFF0CC")

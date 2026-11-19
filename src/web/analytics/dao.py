@@ -1,5 +1,7 @@
 from sqlalchemy import select, tuple_
 
+from src.web.assignments.expressions import current_project_report
+from src.web.assignments.models import Assignment
 from src.web.projects.projects_model import Project, ProjectSnapshot
 from src.web.snapshots.models import Snapshot
 
@@ -9,8 +11,9 @@ class AnalyticsDAO:
     async def get_reports(session, snapshot_ids, scope):
         """Получает показатели только по объектам, доступным пользователю."""
         statement = (
-            select(ProjectSnapshot.snapshot_id, Project.oks_number, ProjectSnapshot.report_data)
+            select(ProjectSnapshot.snapshot_id, Project.oks_number, current_project_report())
             .join(Project, Project.id == ProjectSnapshot.project_id)
+            .outerjoin(Assignment, Assignment.oks_number == Project.oks_number)
             .where(ProjectSnapshot.snapshot_id.in_(snapshot_ids))
             .order_by(Project.oks_number)
         )

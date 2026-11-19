@@ -2,6 +2,8 @@ from sqlalchemy import func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
+from src.web.assignments.expressions import current_project_report
+from src.web.assignments.models import Assignment
 from src.web.snapshots.models import Snapshot
 
 from .projects_model import Project, ProjectSnapshot
@@ -13,6 +15,7 @@ class ProjectDAO:
 
     @staticmethod
     async def get_history(session, oks_number, snapshot):
+        """Читает сохранённые показатели объекта до выбранного снимка для построения графиков."""
         statement = (
             select(Snapshot.id, Snapshot.exported_on, ProjectSnapshot.report_data)
             .join(ProjectSnapshot, ProjectSnapshot.snapshot_id == Snapshot.id)
@@ -37,9 +40,12 @@ class ProjectDAO:
 
     @staticmethod
     async def get_all(session: AsyncSession, snapshot_id: int, filters: ProjectFilters, scope: set[int] | None = None):
+        """Применяет доступ, фильтры, сортировку и пагинацию в БД. Общий счётчик вычисляется до ограничения страницы."""
+        report = current_project_report()
         statement = (
-            select(Project.oks_number, ProjectSnapshot.report_data)
+            select(Project.oks_number, report)
             .join(ProjectSnapshot, ProjectSnapshot.project_id == Project.id)
+            .outerjoin(Assignment, Assignment.oks_number == Project.oks_number)
             .where(ProjectSnapshot.snapshot_id == snapshot_id)
         )
         if scope is not None:
@@ -56,7 +62,7 @@ class ProjectDAO:
                 statement = statement.where(field == value)
         for label, value in (("Руководитель проекта", filters.manager), ("Строительный заместитель", filters.deputy)):
             if value and value.strip():
-                statement = statement.where(ProjectSnapshot.report_data[label].astext.icontains(value.strip(), autoescape=True))
+                statement = statement.where(report[label].astext.icontains(value.strip(), autoescape=True))
         if filters.no_exchange is not None:
             condition = ProjectSnapshot.operations_last_7_days == 0
             statement = statement.where(condition if filters.no_exchange else ProjectSnapshot.operations_last_7_days > 0)
@@ -71,7 +77,7 @@ class ProjectDAO:
         ordering = []
         if filters.group != "none":
             label = "Руководитель проекта" if filters.group == "manager" else "Строительный заместитель"
-            ordering.append(ProjectSnapshot.report_data[label].astext.asc().nulls_last())
+            ordering.append(report[label].astext.asc().nulls_last())
         ordering.extend(((sort_column.desc() if filters.descending else sort_column.asc()).nulls_last(), Project.oks_number))
         # Считаем все доступные строки до применения пагинации.
         total = await session.scalar(select(func.count()).select_from(statement.subquery()))
@@ -82,9 +88,11 @@ class ProjectDAO:
 
     @staticmethod
     async def get_by_number(session: AsyncSession, snapshot_id: int, oks_number: int):
+        """Читает отчёт одного объекта с учётом текущего справочника закреплений для последнего снимка."""
         statement = (
-            select(ProjectSnapshot.report_data)
+            select(current_project_report())
             .join(Project, Project.id == ProjectSnapshot.project_id)
+            .outerjoin(Assignment, Assignment.oks_number == Project.oks_number)
             .where(ProjectSnapshot.snapshot_id == snapshot_id, Project.oks_number == oks_number)
         )
         return await session.scalar(statement)

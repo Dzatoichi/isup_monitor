@@ -40,6 +40,7 @@ class IngestionQueryService:
 
 class IngestionService:
     def __init__(self, sessions: sessionmaker[Session], exchange_threshold: int) -> None:
+        """Открывает запуск выгрузки и закрепляет за снимком версию правил, действующую на дату сбора."""
         self.sessions = sessions
         self.exported_on = datetime.now(REPORT_TIMEZONE).date()
         self.exchange_threshold = exchange_threshold
@@ -52,8 +53,14 @@ class IngestionService:
             session.get_one(Snapshot, self.snapshot_id).regulation_id = regulation.id if regulation else None
 
     def save_project(self, record: dict[str, Any]) -> None:
+        """Проверяет объект, подставляет ответственных и сохраняет его показатели и дочерние записи в одной транзакции."""
         validate_record(record)
         record["_traffic_rules"] = self.rules
+        # Сохраняем происхождение ФИО, чтобы последующее изменение справочника
+        # не перепутать с ответственным, полученным непосредственно из ИСУП.
+        for key in record.get("_assignment_fields", []):
+            record[key] = None
+        record["_assignment_fields"] = []
         if record.get("oks_number"):
             with self.sessions.begin() as session:
                 assignment = session.get(Assignment, record["oks_number"])
@@ -61,6 +68,7 @@ class IngestionService:
                     for key, value in (("project_manager", assignment.manager), ("construction_deputy", assignment.deputy)):
                         if not record.get(key) or not str(record[key]).strip():
                             record[key] = value
+                            record["_assignment_fields"].append(key)
         if record.get("stage") == "СМР" and record.get("oks_number"):
             with self.sessions.begin() as session:
                 project_id = ProjectDAO.upsert(session, record["oks_number"])
@@ -114,6 +122,7 @@ class IngestionService:
     def finish(
         self, *, complete: bool = False, limited: bool = False, error: BaseException | None = None
     ) -> str:
+        """Завершает запуск. Полный результат получает ready, неполный завершённый результат — partial, прерванный — failed."""
         errors = []
         if error is not None:
             # Не помещаем в журнал URL, параметры запросов и исключения с данными подключения.

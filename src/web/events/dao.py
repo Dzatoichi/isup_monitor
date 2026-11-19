@@ -25,6 +25,7 @@ FIELD_GROUPS = {
 
 
 def report_changes(before, after):
+    """Находит изменения заполненных показателей. Пропуск нового значения не превращает в подтверждённое изменение."""
     for category, fields in FIELD_GROUPS.items():
         for field in fields:
             old, new = before.get(field), after.get(field)
@@ -36,6 +37,7 @@ def report_changes(before, after):
 class EventDAO:
     @staticmethod
     def section_read(source, marker):
+        """Определяет, был ли раздел действительно прочитан, чтобы сбой запроса не считался удалением данных."""
         if "sections_read" in source:
             return source["sections_read"].get(marker, False)
         if marker == "pir_documents":

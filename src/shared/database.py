@@ -12,6 +12,7 @@ class Base(DeclarativeBase):
 
 
 class DatabaseHelper:
+    """Хранит асинхронное подключение и фабрику сессий для обработчиков FastAPI."""
     def __init__(self):
         self.engine = create_async_engine(
             url = settings.CONNECT_ASYNC(),
@@ -25,6 +26,7 @@ class DatabaseHelper:
     async def session_getter(
             self,
         ) -> AsyncGenerator[AsyncSession]:
+        """Выдаёт отдельную сессию БД на запрос и закрывает её после завершения обработки."""
         async with self.session_factory() as session:
             yield session
 
@@ -33,6 +35,6 @@ db_helper = DatabaseHelper()
 
 
 def create_ingestion_sessions():
-    """Создаёт синхронные сессии для парсера Playwright."""
+    """Создаёт синхронные сессии для записи результатов парсера вне цикла веб-запросов."""
     engine = create_engine(settings.CONNECT_ASYNC(), pool_pre_ping=True)
     return sessionmaker(engine)

@@ -17,7 +17,7 @@ class SnapshotDAO:
 
     @staticmethod
     def progress_stalled(session, project_id, exported_on, progress, days=56):
-        """Проверяет рост по ежедневным наблюдениям за последние восемь недель."""
+        """Проверяет отсутствие роста готовности за заданный период. При неполной истории возвращает неизвестный результат."""
         if type(progress) is not int or not 0 <= progress <= 100:
             return None
         start = exported_on - timedelta(days=days)

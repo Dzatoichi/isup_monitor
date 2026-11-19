@@ -17,6 +17,7 @@ class ProjectService:
 
     @staticmethod
     async def get_history(session, oks_number, snapshot, category, since=None, until=None):
+        """Готовит сохранённые события объекта для отображения в хронологии."""
         rows = await EventDAO.get_history(session, oks_number, snapshot, category, since, until)
         events = []
         for identifier, day, field, before, after in rows:
@@ -28,6 +29,7 @@ class ProjectService:
 
     @staticmethod
     async def get_charts(session, oks_number, snapshot, documents):
+        """Собирает восемь недель наблюдений готовности и количества документов из выбранного снимка."""
         from src.web.analytics.service import week_start
         history = await ProjectDAO.get_history(session, oks_number, snapshot)
         points = {}
@@ -40,6 +42,7 @@ class ProjectService:
 
     @staticmethod
     async def get_all(session: AsyncSession, filters: ProjectFilters, *, scope: set[int] | None = None) -> ProjectList:
+        """Находит нужный снимок и переводит записи БД в схему ответа реестра."""
         snapshot = await SnapshotService.resolve(session, filters.snapshot_id)
         rows, total = await ProjectDAO.get_all(session, snapshot.id, filters, scope)
         return ProjectList(

@@ -62,6 +62,7 @@ class AssignmentService:
 
     @staticmethod
     async def save(session, rows):
+        """Проверяет существование всех ОКС и применяет импорт целиком. При ошибке данные не фиксируются."""
         numbers = {row["oks_number"] for row in rows}
         existing = set(await session.scalars(select(Project.oks_number).where(Project.oks_number.in_(numbers))))
         if numbers != existing:

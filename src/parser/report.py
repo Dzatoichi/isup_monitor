@@ -75,7 +75,7 @@ def display_date(value):
 
 
 def make_object_report(project, *, exported_on, exchange_threshold=7, rules=None):
-    """Формирует 34 поля отчёта из данных одного объекта и рассчитывает показатели."""
+    """Собирает 34 поля отчёта и рассчитывает показатели на дату снимка по применённой версии правил."""
     rules = rules or project.get("_traffic_rules") or {}
     # Текущий список participants содержит организации. Для подсчёта людей нужны отдельные данные.
     organizations = project.get("participants")

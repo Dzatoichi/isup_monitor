@@ -8,11 +8,13 @@ from .schemas import TrafficRules
 class RegulationDAO:
     @staticmethod
     def applicable(session, day):
+        """Выбирает последнюю по дате версию правил, которая уже вступила в силу."""
         return session.scalar(select(Regulation).where(Regulation.effective_on <= day)
                               .order_by(Regulation.effective_on.desc(), Regulation.id.desc()).limit(1))
 
     @staticmethod
     def ensure_applicable(session, day):
+        """При отсутствии версии создаёт начальные правила ТЗ и возвращает применимую версию."""
         regulation = RegulationDAO.applicable(session, day)
         if regulation:
             return regulation
@@ -28,5 +30,6 @@ class RegulationDAO:
 
     @staticmethod
     async def create(session, version, effective_on, rules):
+        """Сохраняет новую версию правил. Изменение порогов не переписывает прошлые версии."""
         session.add(Regulation(version=version, effective_on=effective_on, rules=TrafficRules.model_validate(rules).model_dump()))
         await session.commit()

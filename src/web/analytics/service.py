@@ -17,6 +17,7 @@ def week_start(day):
 
 
 def metrics(reports):
+    """Считает показатели по доступным отчётам и отдельно учитывает объекты с известными данными об операциях."""
     progress = [row["Готовность, %"] for row in reports if row.get("Готовность, %") is not None]
     operations = [row["Операций за период (последние 7 дн.)"] for row in reports
                   if row.get("Операций за период (последние 7 дн.)") is not None]
@@ -41,6 +42,7 @@ def metrics(reports):
 class AnalyticsService:
     @staticmethod
     async def summary(session, snapshot, scope):
+        """Сравнивает последние доступные снимки восьми календарных недель."""
         current_week = week_start(snapshot.exported_on)
         since = current_week - timedelta(weeks=7)
         snapshots = await AnalyticsDAO.get_snapshots(session, snapshot, since)
@@ -64,6 +66,7 @@ class AnalyticsService:
 
     @staticmethod
     async def completeness(session, snapshot, scope):
+        """Собирает незаполненные обязательные поля и ошибки чтения из выбранного снимка."""
         reports = await AnalyticsDAO.get_reports(session, [snapshot.id], scope)
         sources = dict(await AnalyticsDAO.get_source_issues(session, snapshot.id, scope))
         regulation = await session.get(Regulation, snapshot.regulation_id) if snapshot.regulation_id else None
@@ -91,6 +94,7 @@ class AnalyticsService:
 
     @staticmethod
     async def problems(session, snapshot, scope):
+        """Выбирает красные и жёлтые объекты и определяет длительность наблюдаемого статуса по истории."""
         reports = await AnalyticsDAO.get_reports(session, [snapshot.id], scope)
         problems = {number: row for _, number, row in reports if row.get("Статус") in {"красный", "жёлтый"}}
         if not problems:

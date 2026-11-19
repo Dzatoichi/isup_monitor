@@ -54,6 +54,7 @@ async def read_http_registry(playwright, *, limit=None, on_project=None, concurr
     edo_lock = asyncio.Lock()
 
     async def get_edo_token(rejected=None):
+        """Получает токен ЭДО через действующую сессию ИСУП. Блокировка объединяет обновления от параллельных задач."""
         nonlocal edo_token
         async with edo_lock:
             # Остальные задачи используют токен, обновлённый первой задачей после 401.
@@ -66,6 +67,7 @@ async def read_http_registry(playwright, *, limit=None, on_project=None, concurr
             return edo_token
 
     async def get_edo_members(path, params, *, method="GET", payload=None):
+        """Выполняет запрос чтения ЭДО и один раз повторяет его с новым токеном после ответа 401."""
         token = await get_edo_token()
         for attempt in range(2):
             assert edo_client is not None
@@ -79,6 +81,7 @@ async def read_http_registry(playwright, *, limit=None, on_project=None, concurr
 
     async def request(method, path, payload=None, *, authenticated=True):
         # Повторяем временные ошибки только для запросов чтения.
+        """Выполняет запрос ИСУП. Повторяет временные сбои чтения и обновляет авторизацию при истечении сессии."""
         read_queries = (REGISTRY_PATH, DOCUMENTS_PATH, FINANCE_PATH, SCHEDULE_PATH)
         attempts = 3 if method == "GET" or path in read_queries else 1
         attempt = 0
@@ -119,6 +122,7 @@ async def read_http_registry(playwright, *, limit=None, on_project=None, concurr
         return await request("POST", path, payload)
 
     async def authenticate():
+        """Обменивает логин и пароль из окружения на новую сессию ИСУП."""
         credentials = {
             "login": os.environ["ISUP_LOGIN"],
             "password": os.environ["ISUP_PASSWORD"],
@@ -135,6 +139,7 @@ async def read_http_registry(playwright, *, limit=None, on_project=None, concurr
         return result
 
     async def refresh_auth(expired_session):
+        """Обновляет общую сессию один раз для задач, получивших 401 со старым токеном."""
         nonlocal auth, refresh_error
         async with auth_lock:
             # Пока запрос ждал блокировку, другая задача могла уже обновить сессию.

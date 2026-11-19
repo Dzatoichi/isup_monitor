@@ -22,12 +22,14 @@ async def require_user(user: OptionalUser):
 
 
 async def require_reader(user: Annotated[User, Depends(require_user)]):
+    """Допускает к данным пользователей с назначенной ролью. Гость получает отказ."""
     if user.role == "guest":
         raise HTTPException(403, "Роль ещё не назначена")
     return user
 
 
 async def require_admin(user: Annotated[User, Depends(require_user)]):
+    """Разрешает административное действие только пользователю с ролью администратора."""
     if user.role != "admin":
         raise HTTPException(403, "Требуются права администратора")
     return user

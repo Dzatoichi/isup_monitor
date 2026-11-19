@@ -49,10 +49,12 @@ def fetch_yandex_identity(code):
 class AuthService:
     @staticmethod
     async def get_user(session, token):
+        """Находит пользователя по хешу cookie, если локальная сессия ещё действует."""
         return await AuthDAO.get_user(session, digest(token)) if token else None
 
     @staticmethod
     async def login(session, code, previous_token):
+        """Проверяет профиль Яндекс ID и допустимый домен, обновляет пользователя и создаёт локальную сессию."""
         try:
             profile = await asyncio.to_thread(fetch_yandex_identity, code)
         except (URLError, TimeoutError, ValueError, KeyError, TypeError) as error:
@@ -81,6 +83,7 @@ class AuthService:
 
     @staticmethod
     async def logout(session, token):
+        """Удаляет локальную сессию Монитора. Управление сессией Яндекс ID остаётся на стороне Яндекса."""
         if token:
             await AuthDAO.revoke(session, digest(token))
             await session.commit()

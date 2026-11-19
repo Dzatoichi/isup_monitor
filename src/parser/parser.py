@@ -392,7 +392,7 @@ def stop_on_sigterm(signum, frame):
 
 
 async def run_http(*, limit, on_project=None, concurrency=1):
-    """Открывает HTTP-сессию Playwright без браузера."""
+    """Создаёт асинхронную HTTP-сессию Playwright. В этом режиме Chromium не запускается."""
     from playwright.async_api import async_playwright
 
     from .http_registry import read_http_registry
@@ -404,7 +404,7 @@ async def run_http(*, limit, on_project=None, concurrency=1):
 
 
 def main():
-    """Разбирает параметры запуска, собирает данные и печатает JSON."""
+    """Разбирает команду, запускает сбор, сохраняет снимок и при необходимости печатает JSON."""
     cli = argparse.ArgumentParser(description="Сбор объектов и участников из ИСУП")
     cli.add_argument("--limit", type=int, help="Остановиться после указанного числа объектов")
     cli.add_argument("--headed", action="store_true", help="Показать окно браузера")

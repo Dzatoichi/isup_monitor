@@ -9,6 +9,7 @@ from .models import ROLES, SCOPED_ROLES
 class UserService:
     @staticmethod
     async def project_scope(session, user):
+        """Возвращает разрешённые номера ОКС для РП и заместителя. Для общих ролей возвращает None."""
         if user.role in SCOPED_ROLES:
             explicit = await UserDAO.get_assignments(session, user.id)
             column = Assignment.manager_email if user.role == "manager" else Assignment.deputy_email
@@ -20,12 +21,14 @@ class UserService:
 
     @staticmethod
     async def check_project(session, user, oks_number):
+        """Проверяет доступ к конкретному объекту до чтения его карточки и связанных данных."""
         scope = await UserService.project_scope(session, user)
         if scope is not None and oks_number not in scope:
             raise HTTPException(404, "Объект недоступен")
 
     @staticmethod
     async def set_access(session, actor, user_id, role, assignments):
+        """Меняет роль и прямые закрепления пользователя после повторной проверки прав администратора в транзакции."""
         if role not in ROLES:
             raise ValueError("Выберите роль из списка")
         if actor.id == user_id:

@@ -1,4 +1,4 @@
-from pydantic import SecretStr
+from pydantic import SecretStr, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     YANDEX_REDIRECT_URI: str = ""
     YANDEX_CORPORATE_DOMAIN: str = ""
     WEB_COOKIE_SECURE: bool = True
+    ISUP_EXPORT_DIR: str = "output/exports"
+    YANDEX_DISK_TOKEN: SecretStr | None = None
+    YANDEX_DISK_FOLDER: str = ""
+    ISUP_SCHEDULE_WEEKDAY: int = Field(default=4, ge=0, le=6)
+    ISUP_SCHEDULE_HOUR: int = Field(default=22, ge=0, le=23)
+    ISUP_SCHEDULE_MINUTE: int = Field(default=0, ge=0, le=59)
+    ISUP_SCHEDULE_CONCURRENCY: int = Field(default=4, ge=1, le=16)
+    ISUP_SCHEDULE_UPLOAD: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env", 

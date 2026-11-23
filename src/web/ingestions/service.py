@@ -99,6 +99,7 @@ class IngestionService:
                 related_keys = {"organizations", "people", "contracts", "documents", "pir_documents"}
                 source = {key: value for key, value in record.items() if key not in related_keys}
                 source["sections_read"] = {key: record.get(key) is not None for key in related_keys}
+                source["sections_read"]["itd_acts"] = record.get("itd_acts") is not None
                 SnapshotDAO.upsert_project(
                     session, self.snapshot_id, project_id, self.exported_on,
                     to_jsonable_python(source), report,

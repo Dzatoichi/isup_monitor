@@ -76,7 +76,7 @@ async def read_protected_form(request):
         if len(body) > 16384:
             raise HTTPException(413, "Форма слишком большая")
     try:
-        form = parse_qs(body.decode(), keep_blank_values=True, max_num_fields=10)
+        form = parse_qs(body.decode(), keep_blank_values=True, max_num_fields=64)
     except ValueError as error:
         raise HTTPException(400, "Некорректная форма") from error
     if not request.cookies.get(SESSION_COOKIE) or not secrets.compare_digest(

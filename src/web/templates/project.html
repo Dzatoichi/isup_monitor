@@ -4,7 +4,6 @@
 <a class="back" href="/?snapshot_id={{ snapshot.id }}">← К объектам</a>
 <h1>{{ project['Объект'] or 'Объект без названия' }}</h1>
 <p class="muted">ОКС №{{ project['Номер в ИСУП'] }} · Снимок №{{ snapshot.id }} от {{ snapshot.exported_on.strftime('%d.%m.%Y') }}</p>
-{% if regulation %}<p class="muted">Регламент {{ regulation.version }} · действует с {{ regulation.effective_on.strftime('%d.%m.%Y') }}</p>{% endif %}
 <section class="panel">
   <h2>Карточка объекта</h2>
   <dl class="facts">

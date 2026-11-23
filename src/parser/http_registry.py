@@ -11,6 +11,7 @@ from playwright.async_api import Error as PlaywrightError
 from .auth import RegistryOpenError
 from .edo import collect_edo_records, summarize_teams
 from .pir import read_pir_documents
+from .general_journal import parse_registration
 from .report import parse_date, parse_passport
 
 
@@ -38,7 +39,7 @@ class FinanceText(HTMLParser):
             self.lines.append(value)
 
 
-async def read_http_registry(playwright, *, limit=None, on_project=None, concurrency=1):
+async def read_http_registry(playwright, *, limit=None, on_project=None, concurrency=1, archive="active"):
     """Авторизуется и читает страницы реестра без запуска браузера."""
     base_url = os.environ["ISUP_URL"].rstrip("/")
     client = await playwright.request.new_context(
@@ -66,7 +67,7 @@ async def read_http_registry(playwright, *, limit=None, on_project=None, concurr
                 edo_token = token.strip()
             return edo_token
 
-    async def get_edo_members(path, params, *, method="GET", payload=None):
+    async def get_edo_members(path, params=None, *, method="GET", payload=None):
         """Выполняет запрос чтения ЭДО и один раз повторяет его с новым токеном после ответа 401."""
         token = await get_edo_token()
         for attempt in range(2):
@@ -158,31 +159,7 @@ async def read_http_registry(playwright, *, limit=None, on_project=None, concurr
 
     try:
         auth = await authenticate()
-        query = {
-            "where": {"and": [{"eq": {"archive_oks": False}}, {"eq": {"check_ons": False}}]},
-            "query_parameters": {"id_user_from_card": auth["id"]},
-        }
-        counter = await post(REGISTRY_PATH, {"*": {"func": "count"}, **query})
-        try:
-            count = int(counter[0]["count"])
-        except (IndexError, KeyError, TypeError, ValueError) as error:
-            raise RegistryOpenError("ИСУП вернула некорректный счётчик ОКС") from error
-        if count < 0:
-            raise RegistryOpenError("ИСУП вернула отрицательный счётчик ОКС")
-        target = count if limit is None else min(limit, count)
-        rows = []
-        ids = set()
-        for offset in range(0, target, 100):
-            page_size = min(100, target - offset)
-            batch = await post(REGISTRY_PATH, {"limit": page_size, "offset": offset, **query})
-            if not isinstance(batch, list) or len(batch) != page_size:
-                raise RegistryOpenError(f"ИСУП вернула неполную страницу ОКС со смещением {offset}")
-            for row in batch:
-                number = row.get("id_oks") if isinstance(row, dict) else None
-                if type(number) is not int or number <= 0 or number in ids:
-                    raise RegistryOpenError("ИСУП вернула отсутствующий, некорректный или повторный номер ОКС")
-                ids.add(number)
-                rows.append(row)
+        rows = await read_registry_rows(post, auth["id"], limit, archive)
         if on_project is not None:
             # Токен ЭДО передаётся только отдельному клиенту на подтверждённом домене.
             edo_client = await playwright.request.new_context(
@@ -196,6 +173,39 @@ async def read_http_registry(playwright, *, limit=None, on_project=None, concurr
                 await edo_client.dispose()
         finally:
             await client.dispose()
+
+
+async def read_registry_rows(post, user_id, limit, archive):
+    """Читает архив и рабочий реестр раздельно, сохраняя подтверждённый фильтром признак."""
+    if archive not in {"active", "archived", "all"}:
+        raise ValueError("Неизвестный режим архива")
+    rows, ids = [], set()
+    for archived in ((False, True) if archive == "all" else (archive == "archived",)):
+        remaining = None if limit is None else limit - len(rows)
+        if remaining == 0:
+            break
+        query = {"where": {"and": [{"eq": {"archive_oks": archived}}, {"eq": {"check_ons": False}}]},
+                 "query_parameters": {"id_user_from_card": user_id}}
+        counter = await post(REGISTRY_PATH, {"*": {"func": "count"}, **query})
+        try:
+            count = int(counter[0]["count"])
+        except (IndexError, KeyError, TypeError, ValueError) as error:
+            raise RegistryOpenError("ИСУП вернула некорректный счётчик ОКС") from error
+        if count < 0:
+            raise RegistryOpenError("ИСУП вернула отрицательный счётчик ОКС")
+        target = count if remaining is None else min(remaining, count)
+        for offset in range(0, target, 100):
+            page_size = min(100, target - offset)
+            batch = await post(REGISTRY_PATH, {"limit": page_size, "offset": offset, **query})
+            if not isinstance(batch, list) or len(batch) != page_size:
+                raise RegistryOpenError(f"ИСУП вернула неполную страницу ОКС со смещением {offset}")
+            for row in batch:
+                number = row.get("id_oks") if isinstance(row, dict) else None
+                if type(number) is not int or number <= 0 or number in ids:
+                    raise RegistryOpenError("ИСУП вернула отсутствующий, некорректный или повторный номер ОКС")
+                ids.add(number)
+                rows.append({**row, "_archived": archived, "_registry_mode": archive})
+    return rows
 
 
 async def read_projects(rows, request, on_project, concurrency, get_edo_members):
@@ -222,6 +232,8 @@ async def read_project(request, row, get_edo_members):
     number = row["id_oks"]
     project = {
         "oks_number": number,
+        "archived": row.get("_archived"),
+        "registry_mode": row.get("_registry_mode"),
         "name": row.get("full_name_oks") or row.get("full_name_oks_1"),
         "stage": row.get("name_stadia"),
         "state": row.get("name_state_2"),
@@ -271,9 +283,19 @@ async def read_project(request, row, get_edo_members):
 
     if project.get("external_id"):
         try:
+            project["general_journal_registration"] = await read_http_general_journal(
+                get_edo_members, project["external_id"]
+            )
+        except (RegistryOpenError, PlaywrightError, ValueError, TypeError):
+            project["gsn_error"] = "Не удалось прочитать состояние ОЖР в ГСН"
+        try:
             project["pir_documents"] = await read_pir_documents(get_edo_members, project["external_id"])
         except (RegistryOpenError, ValueError, TypeError) as error:
             project["pir_error"] = str(error) if isinstance(error, RegistryOpenError) else "Не удалось разобрать ПД/РД"
+        try:
+            project["itd_acts"] = await read_http_itd_acts(get_edo_members, project["external_id"])
+        except (RegistryOpenError, PlaywrightError, ValueError, TypeError) as error:
+            project["itd_error"] = str(error) if isinstance(error, RegistryOpenError) else "Не удалось разобрать ИТД"
 
     try:
         documents = await read_http_documents(request, card.get("attr_169_"))
@@ -283,6 +305,35 @@ async def read_project(request, row, get_edo_members):
         project["documents"] = documents
         project["operation_dates"] = [document["document_on"] for document in documents]
     return project
+
+
+async def read_http_general_journal(request, project_id):
+    """Только читает признак ОЖР. Запросов регистрации в ГСН не выполняет."""
+    if not isinstance(project_id, str) or not re.fullmatch(r"[0-9a-fA-F]{24}", project_id):
+        raise RegistryOpenError("Нет корректного идентификатора проекта для чтения ОЖР")
+    response = await request(f"/api/itd-service/general-work-journal/{project_id}")
+    try:
+        if not response.ok:
+            raise RegistryOpenError(f"Чтение ОЖР вернуло HTTP {response.status}")
+        return parse_registration(await response.json(), project_id)
+    finally:
+        await response.dispose()
+
+
+async def read_http_itd_acts(get_edo_members, project_id):
+    """Читает акты ИТД из модуля ЭДО по сетевому endpoint без перехода браузером."""
+    if not isinstance(project_id, str) or not re.fullmatch(r"[0-9a-fA-F]{24}", project_id):
+        raise RegistryOpenError("Нет корректного идентификатора проекта для чтения ИТД")
+    response = await get_edo_members("/api/itd-service/act/sets", {"projectId": project_id})
+    try:
+        if not response.ok:
+            raise RegistryOpenError(f"Чтение ИТД вернуло HTTP {response.status}")
+        rows = await response.json()
+        if not isinstance(rows, list) or any(not isinstance(item, dict) for item in rows):
+            raise RegistryOpenError("ИСУП вернула неожиданный список актов ИТД")
+        return rows
+    finally:
+        await response.dispose()
 
 
 async def read_http_schedule(request, object_id):

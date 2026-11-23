@@ -391,7 +391,7 @@ def stop_on_sigterm(signum, frame):
     raise KeyboardInterrupt
 
 
-async def run_http(*, limit, on_project=None, concurrency=1):
+async def run_http(*, limit, on_project=None, concurrency=1, archive="active"):
     """Создаёт асинхронную HTTP-сессию Playwright. В этом режиме Chromium не запускается."""
     from playwright.async_api import async_playwright
 
@@ -399,7 +399,7 @@ async def run_http(*, limit, on_project=None, concurrency=1):
 
     async with async_playwright() as playwright:
         return await read_http_registry(
-            playwright, limit=limit, on_project=on_project, concurrency=concurrency
+            playwright, limit=limit, on_project=on_project, concurrency=concurrency, archive=archive
         )
 
 
@@ -412,14 +412,24 @@ def main():
     transport.add_argument("--http-registry", action="store_true", help="Прочитать реестр через HTTP без Chromium")
     transport.add_argument("--http", action="store_true", help="Собрать подтверждённые поля ОКС без Chromium")
     cli.add_argument("--concurrency", type=int, help="Число одновременно обрабатываемых объектов в режиме --http (по умолчанию 1)")
+    cli.add_argument("--archive", choices=("active", "archived", "all"), default="active", help="Объекты: рабочие, архивные или все (HTTP)")
     cli.add_argument("--report", action="store_true", help="Выгрузить 34 поля отчёта «Объекты»")
     cli.add_argument("--save-db", action="store_true", help="Записать снимок в PostgreSQL")
+    cli.add_argument("--export-xlsx", action="store_true", help="После сохранения создать управленческий Excel")
+    cli.add_argument("--export-dir", help="Папка Excel-выгрузок")
+    cli.add_argument("--upload-disk", action="store_true", help="Отправить Excel в настроенную папку Диска")
     cli.add_argument("--exchange-threshold", type=int, default=7, help="Порог для вывода о днях без обмена")
     args = cli.parse_args()
+    if args.export_xlsx and not args.save_db:
+        cli.error("--export-xlsx требует --save-db")
+    if args.upload_disk and not args.export_xlsx:
+        cli.error("--upload-disk требует --export-xlsx")
     if args.limit is not None and args.limit < 1:
         cli.error("--limit должен быть больше нуля")
     if args.exchange_threshold < 0:
         cli.error("--exchange-threshold должен быть неотрицательным")
+    if args.archive != "active" and not (args.http or args.http_registry):
+        cli.error("--archive используется только в HTTP-режиме")
     if args.http and args.headed:
         cli.error("--http используется без --headed")
     if args.concurrency is not None:
@@ -431,13 +441,14 @@ def main():
         if args.headed or args.report or args.save_db:
             cli.error("--http-registry выгружает строки реестра в JSON и используется без --headed, --report и --save-db")
         try:
-            rows = asyncio.run(run_http(limit=args.limit))
+            rows = asyncio.run(run_http(limit=args.limit, archive=args.archive))
         except RegistryOpenError as error:
             cli.exit(1, f"{error}\n")
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return
 
-    with (nullcontext() if args.http else sync_playwright()) as playwright:
+    from src.web.ingestions.locking import ingestion_lock
+    with ingestion_lock(args.save_db), (nullcontext() if args.http else sync_playwright()) as playwright:
         browser = None if args.http else playwright.chromium.launch(headless=not args.headed)
         try:
             ingestion = None
@@ -454,7 +465,7 @@ def main():
                         projects = {}
 
                         def save_http_project(record):
-                            for field in ("edo_error", "signatures_error", "finance_error", "schedule_error", "pir_error"):
+                            for field in ("edo_error", "signatures_error", "finance_error", "schedule_error", "pir_error", "gsn_error", "documents_error"):
                                 if field in record:
                                     print(f"ОКС №{record['oks_number']}: {record[field]}", file=sys.stderr)
                             if ingestion is not None:
@@ -462,7 +473,7 @@ def main():
                             projects[record["oks_number"]] = record
 
                         rows = asyncio.run(run_http(
-                            limit=args.limit, on_project=save_http_project, concurrency=args.concurrency or 1
+                            limit=args.limit, on_project=save_http_project, concurrency=args.concurrency or 1, archive=args.archive
                         ))
                         results = [projects[row["id_oks"]] for row in rows]
                         complete = True
@@ -492,6 +503,18 @@ def main():
                 if ingestion is not None:
                     status = ingestion.finish(complete=complete, limited=args.limit is not None)
                     print(f"Снимок {ingestion.snapshot_id} сохранён в PostgreSQL со статусом {status}")
+                    if args.export_xlsx and status in {"ready", "partial"}:
+                        from src.config import settings
+                        from src.web.exports.cli import run as export_snapshot
+                        try:
+                            asyncio.run(export_snapshot(argparse.Namespace(
+                                snapshot_id=ingestion.snapshot_id, oks=None,
+                                output_dir=args.export_dir or settings.ISUP_EXPORT_DIR, upload=args.upload_disk,
+                            )))
+                        except Exception as error:
+                            # Ошибка доставки не отменяет уже сохранённый снимок.
+                            print(f"Снимок сохранён, но экспорт/доставка не завершены ({type(error).__name__}). Повторите команду exports.cli.")
+                            raise SystemExit(2) from None
             output = results
             if args.report:
                 exported_on = ingestion.exported_on if ingestion is not None else datetime.now(REPORT_TIMEZONE).date()

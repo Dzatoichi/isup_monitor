@@ -11,16 +11,20 @@ from src.web.dependencies import DatabaseSession
 from src.web.views import templates
 from .dao import RegulationDAO
 from .schemas import TrafficRules, FIELD_LABELS
+from src.web.analytics.monitoring import ROLE_LABELS
 
 
 router = APIRouter(prefix="/admin/regulations", include_in_schema=False)
 
 
 async def page(request, session, user, error=None):
+    versions = await RegulationDAO.get_all(session)
+    current = next((item for item in versions if item.effective_on <= date.today()), None)
     return templates.TemplateResponse(request, "regulations.html", {
-        "user": user, "csrf": csrf_token(request), "rules": TrafficRules().model_dump(),
-        "versions": await RegulationDAO.get_all(session), "error": error,
+        "user": user, "csrf": csrf_token(request), "rules": TrafficRules.model_validate(current.rules if current else {}).model_dump(),
+        "versions": versions, "error": error,
         "field_labels": FIELD_LABELS,
+        "role_labels": ROLE_LABELS,
     }, status_code=400 if error else 200)
 
 
@@ -48,10 +52,21 @@ async def create(request: Request, session: DatabaseSession, user: Admin):
         if not required or any(label not in by_label for label in required):
             raise ValueError("Неизвестное обязательное поле")
         rules["required_fields"] = list(dict.fromkeys(by_label[label] for label in required))
+        roles_by_label = {label.casefold(): key for key, label in ROLE_LABELS.items()}
+        def values(key):
+            return [item.strip() for item in form.get(key, "").split(",") if item.strip()]
+        rules["required_roles_by_stage"] = {
+            stage: [roles_by_label[item.casefold()] for item in values(key)]
+            for stage, key in (("ПИР", "roles_pir"), ("СМР", "roles_smr"))
+        }
+        rules["required_documents_by_stage"] = {
+            stage: values(key) for stage, key in (("ПИР", "documents_pir"), ("СМР", "documents_smr"))
+        }
+        rules["gsn_required_stages"] = values("gsn_required_stages")
         await RegulationDAO.create(session, version, effective_on, rules)
     except IntegrityError:
         await session.rollback()
         return await page(request, session, user, "Название версии уже используется")
     except (ValueError, KeyError, ValidationError):
-        return await page(request, session, user, "Проверьте дату и пороги. Красный порог обмена должен быть больше жёлтого.")
+        return await page(request, session, user, "Проверьте дату, пороги, названия ролей и документов. Красный порог обмена должен быть больше жёлтого.")
     return RedirectResponse("/admin/regulations", 303)

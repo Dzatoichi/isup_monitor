@@ -19,6 +19,7 @@ dependencies = [
 
 [project.scripts]
 isup-monitor = "src:main"
+isup-export = "src.web.exports.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.9,<0.13.0"]

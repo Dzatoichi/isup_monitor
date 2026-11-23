@@ -8,12 +8,86 @@
   </div>
   <form class="filters" method="get">
     <label>Снимок № <input name="snapshot_id" type="number" min="1" max="2147483647" value="{{ snapshot.id if snapshot else '' }}" required></label>
+    {% if screen == 'summary' %}<input type="hidden" name="search" value="{{ search }}">{% endif %}
     <button>Открыть</button>
   </form>
 </div>
 {% if error %}
   <p class="notice" role="status">{{ error }}</p>
 {% elif screen == 'summary' %}
+  <details class="panel">
+    <summary>Что означают цвета и показатели</summary>
+    <p>Красный: нет обмена от {{ traffic_rules.exchange_red_days }} дней, просрочка от {{ traffic_rules.overdue_red_days }} дней, доля участников без подписи более {{ traffic_rules.unsigned_red_percent }}% либо подтверждено отсутствие роста готовности СМР за {{ traffic_rules.stagnation_days }} дней.</p>
+    <p>Жёлтый: нет обмена от {{ traffic_rules.exchange_yellow_days }} дней при отсутствии красных условий; небольшая просрочка, пустые команды, обязательные поля или недостаток исходных данных.</p>
+    <p>Зелёный: необходимые данные известны, красных и жёлтых условий нет. Серый: объект приостановлен или явно исключён из отслеживания обмена.</p>
+    <p class="muted">Сейчас давность обмена основана на дате документа. Это не подтверждённая дата последней транзакции. Отсутствие документации в выгрузке после ошибки не означает, что её нет в ИСУП.</p>
+    <p><a href="/api/v1/projects/export.xlsx?snapshot_id={{ snapshot.id }}">Скачать факты, проблемы и историю в Excel</a></p>
+  </details>
+  {% macro organization_status(items, known) %}
+    {% for org in items %}
+      <p><strong>{{ org.name }}</strong><br>
+      {% if not org.known %}Подписи: нет данных
+      {% elif org.total == 0 %}Нет участников
+      {% else %}Подписали {{ org.signed }} из {{ org.total }}
+        {% if org.unsigned %} · Без подписи: {{ org.unsigned }}{% endif %}
+        {% if org.unknown %} · Неизвестно: {{ org.unknown }}{% endif %}
+      {% endif %}</p>
+    {% else %}
+      {{ 'Организация не назначена' if known else 'Нет данных' }}
+    {% endfor %}
+  {% endmacro %}
+  <section class="panel table-wrap">
+    <h2>Контроль по объектам</h2>
+    <dl class="facts">
+      <div><dt>С авторским надзором</dt><dd>{{ monitoring_totals.author_supervision }}</dd></div>
+      <div><dt>Со строительным контролем</dt><dd>{{ monitoring_totals.build_control }}</dd></div>
+      <div><dt>РД загружена</dt><dd>{{ monitoring_totals.rd_uploaded }}</dd></div>
+      <div><dt>РД не загружена</dt><dd>{{ monitoring_totals.rd_missing }}</dd></div>
+      <div><dt>РД: нет данных</dt><dd>{{ monitoring_totals.rd_unknown }}</dd></div>
+    </dl>
+    <p class="muted">Подписи — статусы подписания приказов участниками организации. РД считается загруженной при наличии файла. «Нет данных» означает, что состояние не подтверждено.</p>
+    <form class="filters" method="get">
+      <input type="hidden" name="snapshot_id" value="{{ snapshot.id }}">
+      <label>Поиск объекта
+        <input type="search" name="search" value="{{ search }}" maxlength="500" placeholder="Название или номер ИСУП">
+      </label>
+      <button>Найти</button>
+      {% if search %}<a class="button secondary" href="?snapshot_id={{ snapshot.id }}">Сбросить</a>{% endif %}
+    </form>
+    <p class="muted">По 10 объектов на странице. Общие показатели рассчитаны по всему снимку.{% if search %} Найдено {{ total }} из {{ unfiltered_total }} объектов.{% endif %}</p>
+    <div class="pagination-summary"><span>Показано {{ first }}–{{ last }} из {{ total }}</span><span>Страница {{ page }} из {{ page_count }}</span></div>
+    <table>
+      <thead><tr><th>Объект</th><th>Авторский надзор</th><th>Строительный контроль</th><th>ОЖР в ГСН</th><th>Рабочая документация</th><th>Заказчик и роли организаций</th></tr></thead>
+      <tbody>
+        {% for item in monitoring %}
+          <tr>
+            <td><a href="/projects/{{ item.number }}?snapshot_id={{ snapshot.id }}">{{ item.name }}</a><br><span class="muted">ОКС №{{ item.number }}</span></td>
+            <td>{{ organization_status(item.author_supervision, item.edo_read) }}</td>
+            <td>{{ organization_status(item.build_control, item.edo_read) }}</td>
+            <td>{{ item.gsn_status }}{% if item.gsn_number %}<br><span class="muted">№ {{ item.gsn_number }}{% if item.gsn_date %} от {{ item.gsn_date }}{% endif %}</span>{% endif %}</td>
+            <td>{{ item.rd_status }}{% if item.rd_files %}<br><span class="muted">Документов с файлами: {{ item.rd_files }}</span>{% endif %}</td>
+            <td>{% if item.customer %}<p><strong>Заказчик по ИСУП:</strong> {{ item.customer }}</p>{% endif %}
+              {% for org in item.organizations %}<p><strong>{{ org.label }}:</strong> {{ org.name }}</p>
+              {% else %}<span class="muted">{{ 'Организации не указаны' if item.edo_read else 'Роли организаций: нет данных' }}</span>{% endfor %}
+            </td>
+          </tr>
+        {% else %}<tr><td colspan="6">{{ 'По вашему запросу объекты не найдены.' if search else 'В выбранном снимке нет доступных объектов.' }}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    {% if page_count > 1 %}
+      {% set page_url = '?' ~ ({'snapshot_id': snapshot.id, 'search': search}|urlencode) ~ '&page=' %}
+      <nav class="pagination" aria-label="Страницы сводки">
+        {% if page > 1 %}<a class="button secondary" href="{{ page_url }}{{ page - 1 }}">Назад</a>{% endif %}
+        {% if page > 3 %}<a class="button secondary" href="{{ page_url }}1">1</a>{% if page > 4 %}<span aria-hidden="true">…</span>{% endif %}{% endif %}
+        {% for number in range([1, page - 2]|max, [page_count, page + 2]|min + 1) %}
+          {% if number == page %}<span class="button" aria-current="page">{{ number }}</span>
+          {% else %}<a class="button secondary" href="{{ page_url }}{{ number }}">{{ number }}</a>{% endif %}
+        {% endfor %}
+        {% if page + 2 < page_count %}{% if page + 3 < page_count %}<span aria-hidden="true">…</span>{% endif %}<a class="button secondary" href="{{ page_url }}{{ page_count }}">{{ page_count }}</a>{% endif %}
+        {% if page < page_count %}<a class="button secondary" href="{{ page_url }}{{ page + 1 }}">Дальше</a>{% endif %}
+      </nav>
+    {% endif %}
+  </section>
   <section class="panel" aria-label="Показатели выбранного снимка">
     <dl class="facts">
       {% for label, key in [

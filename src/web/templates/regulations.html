@@ -22,6 +22,12 @@
     <label>Обязательные поля через запятую
       <textarea name="required_fields" rows="4" required>{% for key in rules.required_fields %}{{ field_labels[key] }}{% if not loop.last %}, {% endif %}{% endfor %}</textarea>
     </label>
+    <p class="muted">Для управленческой выгрузки укажите только согласованные обязательные роли и документы. Пустое значение означает, что обязательность не установлена. Список ролей: {{ role_labels.values()|join(', ') }}.</p>
+    {% for stage, key in [('ПИР', 'pir'), ('СМР', 'smr')] %}
+      <label>Обязательные роли на {{ stage }}, через запятую <input name="roles_{{ key }}" value="{% for role in rules.required_roles_by_stage.get(stage, []) %}{{ role_labels[role] }}{% if not loop.last %}, {% endif %}{% endfor %}"></label>
+      <label>Обязательные документы на {{ stage }}, через запятую <input name="documents_{{ key }}" value="{{ rules.required_documents_by_stage.get(stage, [])|join(', ') }}" placeholder="ПД, РД"></label>
+    {% endfor %}
+    <label>ОЖР обязателен на стадиях, через запятую <input name="gsn_required_stages" value="{{ rules.gsn_required_stages|join(', ') }}" placeholder="СМР"></label>
     <button>Создать версию</button>
   </form>
 </section>

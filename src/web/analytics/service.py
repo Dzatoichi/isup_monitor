@@ -6,6 +6,7 @@ from src.web.regulations.models import Regulation
 from src.web.regulations.schemas import TrafficRules
 
 from .dao import AnalyticsDAO
+from .monitoring import project_monitoring
 
 
 def is_missing(value):
@@ -40,6 +41,21 @@ def metrics(reports):
 
 
 class AnalyticsService:
+    @staticmethod
+    async def monitoring(session, snapshot, scope):
+        """Собирает контроль организаций, подписей и файлов РД по доступным объектам."""
+        reports = await AnalyticsDAO.get_reports(session, [snapshot.id], scope)
+        sources = dict(await AnalyticsDAO.get_source_issues(session, snapshot.id, scope))
+        groups = []
+        for records in await AnalyticsDAO.get_monitoring_records(session, snapshot.id, scope):
+            grouped = defaultdict(list)
+            for number, record in records:
+                grouped[number].append(record)
+            groups.append(grouped)
+        return [project_monitoring(number, report, sources.get(number, {}),
+                                   *(group[number] for group in groups))
+                for _, number, report in reports]
+
     @staticmethod
     async def summary(session, snapshot, scope):
         """Сравнивает последние доступные снимки восьми календарных недель."""

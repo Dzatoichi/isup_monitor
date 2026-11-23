@@ -4,9 +4,26 @@ from src.web.assignments.expressions import current_project_report
 from src.web.assignments.models import Assignment
 from src.web.projects.projects_model import Project, ProjectSnapshot
 from src.web.snapshots.models import Snapshot
+from src.web.organizations.models import ProjectOrganizationSnapshot
+from src.web.participants.models import ProjectParticipantSnapshot
+from src.web.pir.models import PirDocumentSnapshot
 
 
 class AnalyticsDAO:
+    @staticmethod
+    async def get_monitoring_records(session, snapshot_id, scope):
+        """Читает связанные разделы тремя запросами с теми же ограничениями доступа, что у объектов."""
+        result = []
+        for model in (ProjectOrganizationSnapshot, ProjectParticipantSnapshot, PirDocumentSnapshot):
+            statement = (select(Project.oks_number, model)
+                         .join(Project, Project.id == model.project_id)
+                         .where(model.snapshot_id == snapshot_id)
+                         .order_by(Project.oks_number, model.row_number))
+            if scope is not None:
+                statement = statement.where(Project.oks_number.in_(scope))
+            result.append((await session.execute(statement)).all())
+        return result
+
     @staticmethod
     async def get_reports(session, snapshot_ids, scope):
         """Получает показатели только по объектам, доступным пользователю."""

@@ -22,7 +22,9 @@ COPY migrations/ migrations/
 COPY src/ src/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable \
-    && useradd --create-home --shell /usr/sbin/nologin appuser
+    && useradd --create-home --shell /usr/sbin/nologin appuser \
+    && mkdir -p /app/output/exports \
+    && chown -R appuser:appuser /app/output
 
 USER appuser
 
